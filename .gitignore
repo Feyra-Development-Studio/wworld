@@ -1,0 +1,9 @@
+*.o
+*.ppu
+*.a
+*.compiled
+.bltunits/
+csv_repeat/
+src/demo/demo
+src/demo/wwwalk
+src/demo/wwtest
