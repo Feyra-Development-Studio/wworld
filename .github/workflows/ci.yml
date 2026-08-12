@@ -1,0 +1,34 @@
+name: Dungeon generator (Pascal + R)
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Free Pascal
+      run: sudo apt-get update && sudo apt-get install -y fp-compiler
+
+    - name: Install R (r-base)
+      run: sudo apt-get install -y r-base
+
+    - name: Build demo
+      run: fpc src/demo/demo.pas
+
+    - name: Run demo
+      run: ./demo || true
+
+    - name: Run R geometry script
+      run: Rscript scripts/generate_geometry.R --out geometry_r.json
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: dungeon-artifacts
+        path: |
+          geometry.json
+          geometry_r.json
+
