@@ -1,6 +1,6 @@
-name: Dungeon generator (Pascal + R)
+name: dungeon generator (Pascal + R)
 
-on: [push]
+on: [push, pull_request]
 
 jobs:
   build:
@@ -8,27 +8,46 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        submodules: recursive
 
     - name: Install Free Pascal
-      run: sudo apt-get update && sudo apt-get install -y fp-compiler
+      # fp-units-fcl нужен ради contnrs, одного fp-compiler не хватает
+      run: sudo apt-get update && sudo apt-get install -y fp-compiler fp-units-base fp-units-fcl
 
-    - name: Install R (r-base)
-      run: sudo apt-get install -y r-base
+    - name: Install R
+      run: sudo apt-get install -y --no-install-recommends r-base-core
 
-    - name: Build demo
-      run: fpc src/demo/demo.pas
+    - name: Build generator
+      run: fpc -Mobjfpc -Sh -O2 -Fusrc/dungeon -FUsrc/dungeon -osrc/demo/demo src/demo/demo.pas
 
-    - name: Run demo
-      run: ./demo || true
+    - name: Build walker
+      run: fpc -Mobjfpc -Sh -O2 -Fusrc/dungeon -FUsrc/dungeon -osrc/demo/wwwalk src/demo/wwwalk.pas
 
-    - name: Run R geometry script
-      run: Rscript scripts/generate_geometry.R --out geometry_r.json
+    - name: Compile-check BearLibTerminal backend
+      # линковка требует libBearLibTerminal.so, поэтому только компиляция (-Cn)
+      run: |
+        mkdir -p .bltunits
+        fpc -Mobjfpc -Sh -Cn -dUSE_BLT -Fusrc/dungeon \
+            -Futhird_party/bearlibterminal/Terminal/Include/Pascal \
+            -FU.bltunits src/dungeon/wwViewer.pas
 
-    - name: Upload artifacts
+    - name: Generate 10 levels
+      run: ./src/demo/demo --seed 20260813 --levels 10 --out csv
+
+    - name: Validate invariants (R)
+      run: Rscript scripts/validate_dungeon.R --dir csv
+
+    - name: Determinism check
+      run: |
+        ./src/demo/demo --seed 20260813 --levels 10 --out csv_repeat > /dev/null
+        diff -r csv csv_repeat && echo "детерминизм подтверждён"
+
+    - name: Walk smoke test
+      run: ./src/demo/wwwalk --dir csv --script "ddsswwaa" | tail -3
+
+    - name: Upload maps
       uses: actions/upload-artifact@v4
       with:
-        name: dungeon-artifacts
-        path: |
-          geometry.json
-          geometry_r.json
-
+        name: dungeon-csv
+        path: csv/
