@@ -356,6 +356,10 @@ jobs:
     - uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ steps.ver.outputs.tag }}
+        # Тег вешаем на коммит прогона, а не на ветку по умолчанию: релиз идёт
+        # раньше переноса в main, и без этого тег садится на то, что в main
+        # лежало до переноса.
+        target_commitish: ${{ github.sha }}
         name: wworld ${{ steps.ver.outputs.value }}
         body: |
           Сборка из ветки `tests`, выложена после зелёных тестов: ядро
