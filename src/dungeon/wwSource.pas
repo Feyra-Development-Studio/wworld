@@ -47,7 +47,7 @@ type
     FFile: string;
     function LevelObject(ANumber: Integer): TWwLevel;
   public
-    constructor Create(const AFileName, AGeometryScript: string);
+    constructor Create(const AFileName, AGeometryScript: string; const AEngine: string = '');
     destructor Destroy; override;
     function LevelCount: Integer; override;
     function LoadGrid(ANumber: Integer): TWwGrid; override;
@@ -112,7 +112,7 @@ end;
 
 { TWwJsonSource }
 
-constructor TWwJsonSource.Create(const AFileName, AGeometryScript: string);
+constructor TWwJsonSource.Create(const AFileName, AGeometryScript: string; const AEngine: string = '');
 var
   i: Integer;
   lv: TWwLevel;
@@ -120,7 +120,7 @@ begin
   inherited Create;
   FFile := AFileName;
   FReader := TWwJsonReader.Create(AFileName);
-  FGeom := TWwGeometryClient.Create(AGeometryScript);
+  FGeom := TWwGeometryClient.Create(AGeometryScript, AEngine);
   FRebuilder := TWwRebuilder.Create(FGeom);
   FCache := TFPObjectList.Create(True);
   for i := 0 to FReader.LevelCount - 1 do

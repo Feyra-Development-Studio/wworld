@@ -1,8 +1,12 @@
 unit wwRGeom;
-{ Клиент геометрического сервера на R.
+{ Клиент геометрического движка на R.
 
-  Генератор поднимает один процесс Rscript на всю генерацию и общается с
-  ним построчно через каналы. Формы комнат (матрицы-маски), кисти коридоров
+  Движок — обычный дочерний процесс, читающий команды из stdin и пишущий
+  ответы в stdout. Никаких сокетов и ничего слушающего порт: приложение
+  клиентское, и запуск интерпретатора рядом с собой — ровно то, ради чего
+  берётся Rscript. Какой именно интерпретатор запускать, задаётся строкой
+  команды, поэтому вместо GNU R можно подставить Renjin на JVM, не меняя
+  ни протокола, ни кода вокруг. Формы комнат (матрицы-маски), кисти коридоров
   и разворачивание осевой линии в вектор клеток считаются на R — здесь
   только транспорт, разбор ответа и кеш.
 
@@ -24,14 +28,15 @@ type
   TWwGeometryClient = class
   private
     FProc: TProcess;
-    FScript: string;
+    FScript, FEngine: string;
     FCache: TFPStringHashTable;
     FCalls, FHits: Integer;
     function ReadLine: string;
     function Ask(const ARequest: string; AUseCache: Boolean): string;
     function ShapeFromReply(const AName, AReply: string): TWwShape;
   public
-    constructor Create(const AScriptPath: string);
+    constructor Create(const AScriptPath: string); overload;
+    constructor Create(const AScriptPath, AEngine: string); overload;
     destructor Destroy; override;
     function Build(ASpec: TWwShapeSpec): TWwShape;
     procedure BrushOffsets(ARank: Integer; AOut: TWwPointList);
@@ -41,28 +46,50 @@ type
       out AReached, ATotal, AX0, AY0, AX1, AY1: Integer): Boolean;
     property Calls: Integer read FCalls;
     property CacheHits: Integer read FHits;
+    property Engine: string read FEngine;
   end;
 
 implementation
 
 constructor TWwGeometryClient.Create(const AScriptPath: string);
+begin
+  Create(AScriptPath, '');
+end;
+
+{ AEngine — командная строка запуска интерпретатора; путь к скрипту
+  дописывается последним аргументом. Пусто — берётся Rscript. Разделитель
+  аргументов пробел, поэтому путей с пробелами в строке движка быть не должно. }
+constructor TWwGeometryClient.Create(const AScriptPath, AEngine: string);
 var
-  reply: string;
+  reply, cmd, part: string;
+  parts: TStringArray;
+  i: Integer;
 begin
   inherited Create;
   FScript := AScriptPath;
+  cmd := AEngine;
+  if cmd = '' then cmd := GetEnvironmentVariable('WWORLD_R_ENGINE');
+  if cmd = '' then cmd := 'Rscript';
+  FEngine := cmd;
   if not FileExists(FScript) then
     raise EWwGeometry.CreateFmt('не найден геометрический скрипт: %s', [FScript]);
   FCache := TFPStringHashTable.Create;
   FProc := TProcess.Create(nil);
-  FProc.Executable := 'Rscript';
+  parts := FEngine.Split([' ']);
+  FProc.Executable := parts[0];
+  for i := 1 to High(parts) do
+  begin
+    part := parts[i];
+    if part <> '' then FProc.Parameters.Add(part);
+  end;
   FProc.Parameters.Add(FScript);
   FProc.Options := [poUsePipes, poStderrToOutPut];
   try
     FProc.Execute;
   except
     on E: Exception do
-      raise EWwGeometry.CreateFmt('не удалось запустить Rscript: %s', [E.Message]);
+      raise EWwGeometry.CreateFmt('не удалось запустить движок «%s»: %s',
+        [FEngine, E.Message]);
   end;
   reply := Ask('PING', False);
   if reply <> 'OK PONG' then

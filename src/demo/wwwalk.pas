@@ -25,7 +25,7 @@ uses
 type
   TWwWalkApp = class
   private
-    FJson, FGeometry, FCsvDir, FScript: string;
+    FJson, FGeometry, FCsvDir, FScript, FEngine: string;
     procedure ParseArgs;
     function ResolveGeometry: string;
     function MakeSource: TWwMapSource;
@@ -39,6 +39,7 @@ begin
   inherited Create;
   FJson := 'out/dungeon.json';
   FGeometry := 'scripts/geometry.R';
+  FEngine := '';
   FCsvDir := '';
   FScript := '';
 end;
@@ -60,6 +61,11 @@ begin
     else if (a = '--dir') and (i < ParamCount) then
     begin
       FCsvDir := ParamStr(i + 1);
+      Inc(i);
+    end
+    else if (a = '--engine') and (i < ParamCount) then
+    begin
+      FEngine := ParamStr(i + 1);
       Inc(i);
     end
     else if (a = '--geometry') and (i < ParamCount) then
@@ -93,7 +99,7 @@ begin
   if FCsvDir <> '' then
     Result := TWwCsvSource.Create(FCsvDir)
   else
-    Result := TWwJsonSource.Create(FJson, ResolveGeometry);
+    Result := TWwJsonSource.Create(FJson, ResolveGeometry, FEngine);
 end;
 
 function TWwWalkApp.Run: Integer;

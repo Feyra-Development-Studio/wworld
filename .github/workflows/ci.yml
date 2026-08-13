@@ -117,12 +117,12 @@ jobs:
         if-no-files-found: warn
         retention-days: 14
 
-  # Спайк по задаче #2: исполняется ли geometry.R под Renjin, интерпретатором R
-  # на JVM. От этого зависят и поставка среды R под Windows (#4), и Android (#6).
-  # Пока результат неизвестен, задание не блокирует ни релиз, ни остальные
-  # сборки — оно только собирает сведения.
-  renjin-spike:
-    name: спайк Renjin (geometry.R на JVM)
+  # Задача #2: Renjin как второй движок геометрии. Renjin запускается точно
+  # так же, как Rscript — дочерним процессом, читающим stdin; ничего
+  # слушающего порт в клиентском приложении быть не должно.
+  # Сверяются и ответы на наборе команд, и подземелья целиком при одном seed.
+  renjin:
+    name: Renjin как движок геометрии
     needs: core
     continue-on-error: true
     runs-on: ubuntu-latest
@@ -138,28 +138,36 @@ jobs:
         distribution: temurin
         java-version: '17'
 
-    - name: Установка R
-      run: |
-        set -euo pipefail
-        sudo apt-get update
-        sudo apt-get install -y --no-install-recommends r-base-core r-cran-codetools
-
-    - name: Сверка ответов GNU R и Renjin
+    - name: Инструменты
       run: |
         set -euo pipefail
         mkdir -p logs
-        tools/renjin-spike/run.sh build/renjin 2>&1 | tee logs/30-renjin-spike.log
+        sudo apt-get update
+        sudo apt-get install -y fp-compiler fp-units-base fp-units-fcl
+        sudo apt-get install -y --no-install-recommends r-base-core r-cran-codetools
 
-    - name: Отчёт спайка
+    - name: Сборка генератора
+      run: |
+        set -euo pipefail
+        fpc -Mobjfpc -Sh -O2 -Fusrc/dungeon -FUsrc/dungeon \
+            -osrc/demo/demo src/demo/demo.pas > /dev/null
+
+    - name: Сверка движков
+      run: |
+        set -euo pipefail
+        tools/renjin/check.sh build/renjin ./src/demo/demo "$SEED" 2>&1 | tee logs/30-renjin.log
+
+    - name: Отчёт
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: renjin-spike
+        name: renjin-check
         path: |
           logs/
-          build/renjin/gnu-r.txt
-          build/renjin/renjin.txt
-          build/renjin/renjin.err
+          build/renjin/*.txt
+          build/renjin/*.diff
+          build/renjin/*.log
+          build/renjin/*.err
         if-no-files-found: warn
         retention-days: 30
 

@@ -27,7 +27,7 @@ type
     FLevels: Integer;
     FOutDir: string;
     FDumpLevel: Integer;
-    FGeometry: string;
+    FGeometry, FEngine: string;
     FTest: Boolean;
     FFingerprints: TStringList;
     procedure ParseArgs;
@@ -50,6 +50,7 @@ begin
   FOutDir := 'out';
   FDumpLevel := 0;
   FGeometry := 'scripts/geometry.R';
+  FEngine := '';
   FTest := False;
   FFingerprints := TStringList.Create;
 end;
@@ -82,6 +83,11 @@ begin
     else if (a = '--out') and (i < ParamCount) then
     begin
       FOutDir := ParamStr(i + 1);
+      Inc(i);
+    end
+    else if (a = '--engine') and (i < ParamCount) then
+    begin
+      FEngine := ParamStr(i + 1);
       Inc(i);
     end
     else if (a = '--geometry') and (i < ParamCount) then
@@ -199,7 +205,7 @@ begin
   Writeln('wworld dungeon generator | seed=', FSeed, ' levels=', FLevels,
           ' out=', FOutDir, BoolToStr(FTest, ' [test]', ''));
   try
-    gen := TWwGenerator.Create(ResolveGeometry);
+    gen := TWwGenerator.Create(ResolveGeometry, FEngine);
   except
     on E: Exception do
     begin

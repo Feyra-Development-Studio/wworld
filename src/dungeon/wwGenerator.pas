@@ -66,7 +66,7 @@ type
     procedure PlaceStairs;
     function TryBuild(ALevelNo: Integer; ASeed: QWord; AAttempt: Integer): TWwLevel;
   public
-    constructor Create(const AGeometryScript: string);
+    constructor Create(const AGeometryScript: string; const AEngine: string = '');
     destructor Destroy; override;
     function Generate(ALevelNo: Integer; ASeed: QWord): TWwLevel;
     property Report: string read FReport;
@@ -75,10 +75,10 @@ type
 
 implementation
 
-constructor TWwGenerator.Create(const AGeometryScript: string);
+constructor TWwGenerator.Create(const AGeometryScript: string; const AEngine: string = '');
 begin
   inherited Create;
-  FGeom := TWwGeometryClient.Create(AGeometryScript);
+  FGeom := TWwGeometryClient.Create(AGeometryScript, AEngine);
   FRules := nil;
   FRng := nil;
   FRouter := nil;
