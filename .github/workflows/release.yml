@@ -1,0 +1,101 @@
+name: релиз
+
+# Только по прямому указанию: зелёные тесты — условие необходимое, но не
+# достаточное. Автоматической выкладки на каждый прогон здесь нет и не будет.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Напишите "выкладываем", чтобы подтвердить'
+        required: true
+        default: ''
+      major:
+        description: 'Первая цифра версии (меняется только вручную)'
+        required: false
+        default: '0'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: сборка и выкладка релиза
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+    - name: Проверка подтверждения
+      run: |
+        set -euo pipefail
+        if [ "${{ inputs.confirm }}" != "выкладываем" ]; then
+          echo "подтверждение не получено — выкладки не будет"
+          exit 1
+        fi
+
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    # Версия 0.yy.m.n: yy — год, m — месяц без ведущего нуля, n растёт внутри
+    # месяца и только после выкладки, а с началом месяца снова становится 1.
+    # Считается по уже выложенным релизам, а не по номеру прогона.
+    - name: Номер версии
+      id: ver
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        MAJOR="${{ inputs.major }}"
+        YY="$(date -u +%y)"
+        M="$(date -u +%-m)"
+        PREFIX="v${MAJOR}.${YY}.${M}."
+        N=$(gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate --jq '.[].tag_name' \
+            | grep -c "^${PREFIX}" || true)
+        N=$((N + 1))
+        echo "value=${MAJOR}.${YY}.${M}.${N}" >> "$GITHUB_OUTPUT"
+        echo "tag=${PREFIX}${N}" >> "$GITHUB_OUTPUT"
+        echo "версия ${MAJOR}.${YY}.${M}.${N}"
+
+    - name: Инструменты
+      run: |
+        set -euo pipefail
+        sudo apt-get update
+        sudo apt-get install -y fp-compiler fp-units-base fp-units-fcl rpm zip \
+                                fp-units-win-base fp-units-win-fcl binutils-mingw-w64-x86-64
+        sudo apt-get install -y --no-install-recommends r-base-core r-cran-codetools
+
+    - name: Сборка пакетов
+      run: |
+        set -euo pipefail
+        packaging/build-linux.sh "${{ steps.ver.outputs.value }}" dist
+        packaging/build-windows.sh "${{ steps.ver.outputs.value }}" dist
+
+    # Пока не охвачены все платформы, релиз не выкладывается. Проверка
+    # механическая, чтобы про это нельзя было забыть.
+    - name: Все платформы на месте
+      run: |
+        set -euo pipefail
+        missing=""
+        for pattern in "dist/wworld_*_amd64.deb" "dist/wworld-*.x86_64.rpm" \
+                       "dist/wworld_*_win64_setup.exe" "dist/wworld_*.apk" "dist/wworld_*.xapk"; do
+          compgen -G "$pattern" > /dev/null || missing="$missing $pattern"
+        done
+        if [ -n "$missing" ]; then
+          echo "релиз не выкладывается, не хватает сборок:$missing"
+          exit 1
+        fi
+
+    - uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ steps.ver.outputs.tag }}
+        target_commitish: ${{ github.sha }}
+        name: wworld ${{ steps.ver.outputs.value }}
+        files: dist/*
+        fail_on_unmatched_files: true
+
+    - name: Перенос в main
+      run: |
+        set -euo pipefail
+        git push origin "HEAD:refs/heads/main"
