@@ -29,10 +29,11 @@ type
     function CellAllowed(AX, AY: Integer; AAllowed: TWwIntList): Boolean;
     function CanOccupy(AX, AY: Integer; AAllowed: TWwIntList): Boolean;
     procedure EraseOwner(AOwnerId: Integer);
-    procedure DeriveWalls;
+    function AsDigits: string;
+    procedure ApplyDigits(const ADigits: string);
     function IsWalkable(AX, AY: Integer): Boolean;
     function CountWalkable: Integer;
-    function CroppedCopy(AMargin: Integer; out AOffX, AOffY: Integer): TWwGrid;
+    function CopyRegion(AX0, AY0, AX1, AY1: Integer): TWwGrid;
     function AsText: string;
     function SameAs(AOther: TWwGrid): Boolean;
     property W: Integer read FW;
@@ -152,60 +153,48 @@ begin
   Result := n;
 end;
 
-procedure TWwGrid.DeriveWalls;
+{ Карта уезжает на анализ в R строкой цифр: коды клеток укладываются в 0..9. }
+function TWwGrid.AsDigits: string;
 var
-  x, y, dx, dy: Integer;
-  touch: Boolean;
+  i: Integer;
 begin
-  for y := 0 to FH - 1 do
-    for x := 0 to FW - 1 do
-      if FCode[Index(x, y)] = WW_ROCK then
-      begin
-        touch := False;
-        for dy := -1 to 1 do
-          for dx := -1 to 1 do
-            if IsWalkable(x + dx, y + dy) then touch := True;
-        if touch then FCode[Index(x, y)] := WW_WALL;
-      end;
+  SetLength(Result, FW * FH);
+  for i := 0 to FW * FH - 1 do
+    Result[i + 1] := Chr(Ord('0') + FCode[i]);
 end;
 
-function TWwGrid.CroppedCopy(AMargin: Integer; out AOffX, AOffY: Integer): TWwGrid;
+procedure TWwGrid.ApplyDigits(const ADigits: string);
 var
-  x, y, minX, minY, maxX, maxY, nw, nh: Integer;
-  g: TWwGrid;
-  found: Boolean;
+  i: Integer;
 begin
-  minX := FW; minY := FH; maxX := -1; maxY := -1;
-  found := False;
-  for y := 0 to FH - 1 do
-    for x := 0 to FW - 1 do
-      if FCode[Index(x, y)] <> WW_ROCK then
-      begin
-        found := True;
-        if x < minX then minX := x;
-        if y < minY then minY := y;
-        if x > maxX then maxX := x;
-        if y > maxY then maxY := y;
-      end;
-  AOffX := 0;
-  AOffY := 0;
-  if not found then
+  if Length(ADigits) <> FW * FH then
+    raise Exception.CreateFmt('карта из R: ожидалось %d клеток, получено %d',
+      [FW * FH, Length(ADigits)]);
+  for i := 0 to FW * FH - 1 do
+    FCode[i] := Ord(ADigits[i + 1]) - Ord('0');
+end;
+
+{ Вырезка по рамке, посчитанной на R. }
+function TWwGrid.CopyRegion(AX0, AY0, AX1, AY1: Integer): TWwGrid;
+var
+  x, y, nw, nh: Integer;
+  g: TWwGrid;
+begin
+  if AX0 < 0 then AX0 := 0;
+  if AY0 < 0 then AY0 := 0;
+  if AX1 > FW - 1 then AX1 := FW - 1;
+  if AY1 > FH - 1 then AY1 := FH - 1;
+  nw := AX1 - AX0 + 1;
+  nh := AY1 - AY0 + 1;
+  if (nw < 1) or (nh < 1) then
   begin
     Result := TWwGrid.Create(1, 1);
     Exit;
   end;
-  minX := minX - AMargin; if minX < 0 then minX := 0;
-  minY := minY - AMargin; if minY < 0 then minY := 0;
-  maxX := maxX + AMargin; if maxX > FW - 1 then maxX := FW - 1;
-  maxY := maxY + AMargin; if maxY > FH - 1 then maxY := FH - 1;
-  AOffX := -minX;
-  AOffY := -minY;
-  nw := maxX - minX + 1;
-  nh := maxY - minY + 1;
   g := TWwGrid.Create(nw, nh);
   for y := 0 to nh - 1 do
     for x := 0 to nw - 1 do
-      g.Put(x, y, FCode[Index(minX + x, minY + y)], FOwner[Index(minX + x, minY + y)]);
+      g.Put(x, y, FCode[Index(AX0 + x, AY0 + y)], FOwner[Index(AX0 + x, AY0 + y)]);
   Result := g;
 end;
 

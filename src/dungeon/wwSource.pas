@@ -1,7 +1,7 @@
 unit wwSource;
-{ Источник карт для ходилки: либо основной JSON с графом (карта строится
-  заново геометрией на R), либо тестовая выгрузка CSV (готовый растр, R не
-  нужен). }
+{ Источник карт для ходилки: либо основное хранилище — граф в JSON, из
+  которого карта строится заново геометрией на R, либо тестовая выгрузка
+  CSV, то есть готовый снимок той же карты. }
 
 {$MODE OBJFPC}{$H+}
 
@@ -162,12 +162,11 @@ end;
 function TWwJsonSource.LoadGrid(ANumber: Integer): TWwGrid;
 var
   lv: TWwLevel;
-  dx, dy: Integer;
 begin
   Result := nil;
   lv := LevelObject(ANumber);
   if lv = nil then Exit;
-  Result := lv.Grid.CroppedCopy(0, dx, dy);
+  Result := lv.Grid.CopyRegion(0, 0, lv.Grid.W - 1, lv.Grid.H - 1);
 end;
 
 function TWwJsonSource.StairUpX(ANumber: Integer): Integer;

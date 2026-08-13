@@ -1,5 +1,5 @@
 #!/usr/bin/env Rscript
-# wworld: геометрия подземелья.
+# wworld: геометрия и топология подземелья.
 #
 # Скрипт запускается генератором на Pascal один раз и живёт всё время
 # генерации, отвечая на запросы построчно через stdin/stdout. Вся геометрия
@@ -19,6 +19,12 @@
 #                                        длинных сторон/диаметров частей)
 #   BRUSH R          -> OK N dx dy dx dy ...
 #   EXPAND R N x y x y ...  -> OK M x y x y ...   (клетки коридора, без повторов)
+#   WALLS W H <коды одной строкой цифр>
+#       -> OK <коды со стенами>
+#   FINALIZE W H SX SY <коды>
+#       -> OK <достижимо> <всего> <x0> <y0> <x1> <y1> <коды со стенами>
+#           достижимо/всего — охват заливки от (SX,SY) по проходимым клеткам,
+#           x0..y1 — рамка непустой части с полем в клетку
 #   PING             -> OK PONG
 #   QUIT             -> завершение
 # Ошибка: ERR <текст>
@@ -113,15 +119,74 @@ WwCorridorGeometry <- suppressMessages(setRefClass(
   )
 ))
 
+# Карта целиком — это матрица, а стены, связность и рамка — операции над
+# матрицей: сдвиг, поэлементное ИЛИ, сравнение. Ровно то, ради чего здесь R.
+WwMapAnalysis <- suppressMessages(setRefClass(
+  "WwMapAnalysis",
+  methods = list(
+
+    shifted = function(m, dx, dy, fill) {
+      nr <- nrow(m); nc <- ncol(m)
+      out <- matrix(fill, nr, nc)
+      rs <- max(1, 1 - dy):min(nr, nr - dy)
+      cs <- max(1, 1 - dx):min(nc, nc - dx)
+      out[rs, cs] <- m[rs + dy, cs + dx]
+      out
+    },
+
+    dilate8 = function(mask) {
+      out <- mask
+      for (dy in -1:1) for (dx in -1:1) {
+        if (dx == 0 && dy == 0) next
+        out <- out | shifted(mask, dx, dy, FALSE)
+      }
+      out
+    },
+
+    walkable = function(m) m >= 2 & m <= 9,
+
+    # стена — монолит, касающийся прохода хотя бы углом
+    walls = function(m) {
+      m[m == 0 & dilate8(walkable(m))] <- 1
+      m
+    },
+
+    # заливка расширением: сколько проходимых клеток достижимо от старта
+    reached = function(m, sx, sy) {
+      walk <- walkable(m)
+      seen <- matrix(FALSE, nrow(m), ncol(m))
+      if (sy + 1 > nrow(m) || sx + 1 > ncol(m)) return(0)
+      seen[sy + 1, sx + 1] <- TRUE
+      repeat {
+        grown <- dilate8(seen) & walk
+        if (identical(grown, seen)) break
+        seen <- grown
+      }
+      sum(seen)
+    },
+
+    # рамка непустой части с полем в одну клетку
+    bbox = function(m, margin) {
+      idx <- which(m != 0, arr.ind = TRUE)
+      if (nrow(idx) == 0) return(c(0, 0, ncol(m) - 1, nrow(m) - 1))
+      c(max(0, min(idx[, 2]) - 1 - margin),
+        max(0, min(idx[, 1]) - 1 - margin),
+        min(ncol(m) - 1, max(idx[, 2]) - 1 + margin),
+        min(nrow(m) - 1, max(idx[, 1]) - 1 + margin))
+    }
+  )
+))
+
 WwGeometryServer <- suppressMessages(setRefClass(
   "WwGeometryServer",
-  fields = list(shapes = "ANY", corridors = "ANY"),
+  fields = list(shapes = "ANY", corridors = "ANY", maps = "ANY"),
   methods = list(
 
     initialize = function(...) {
       initFields(...)
       shapes <<- WwShapeFactory$new()
       corridors <<- WwCorridorGeometry$new()
+      maps <<- WwMapAnalysis$new()
       invisible(.self)
     },
 
@@ -157,6 +222,29 @@ WwGeometryServer <- suppressMessages(setRefClass(
               res$metric, packMask(res$mask))
     },
 
+    # карта передаётся строкой цифр: коды клеток укладываются в 0..9
+    unpackMap = function(w, h, digits) {
+      matrix(as.integer(strsplit(digits, "")[[1]]), nrow = h, ncol = w, byrow = TRUE)
+    },
+
+    packMap = function(m) paste(as.integer(t(m)), collapse = ""),
+
+    handleWalls = function(a) {
+      m <- unpackMap(as.integer(a[2]), as.integer(a[3]), a[4])
+      sprintf("OK %s", packMap(maps$walls(m)))
+    },
+
+    handleFinalize = function(a) {
+      w <- as.integer(a[2]); h <- as.integer(a[3])
+      sx <- as.integer(a[4]); sy <- as.integer(a[5])
+      m <- unpackMap(w, h, a[6])
+      reach <- maps$reached(m, sx, sy)
+      total <- sum(maps$walkable(m))
+      m <- maps$walls(m)
+      b <- maps$bbox(m, 1)
+      sprintf("OK %d %d %d %d %d %d %s", reach, total, b[1], b[2], b[3], b[4], packMap(m))
+    },
+
     handleBrush = function(a) {
       b <- corridors$brush(as.integer(a[2]))
       sprintf("OK %d %s", nrow(b), packPairs(b))
@@ -178,6 +266,8 @@ WwGeometryServer <- suppressMessages(setRefClass(
         SHAPE = handleShape(a),
         COMPOSITE = handleComposite(a),
         BRUSH = handleBrush(a),
+        WALLS = handleWalls(a),
+        FINALIZE = handleFinalize(a),
         EXPAND = handleExpand(a),
         PING = "OK PONG",
         sprintf("ERR неизвестная команда: %s", a[1])

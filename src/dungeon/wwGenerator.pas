@@ -14,7 +14,7 @@ unit wwGenerator;
      после того, как к ней успешно проложен коридор от уже связанной
      структуры; не проложился — комната стирается и место выбирается заново.
      Дополнительные рёбра (циклы, развилки) только добавляют связей.
-     В конце CheckConnectivity делает заливку и сверяет охват со всеми
+     В конце R делает заливку от лестницы и сверяет охват со всеми
      проходимыми клетками — инвариант проверяется, а не предполагается. }
 
 {$MODE OBJFPC}{$H+}
@@ -52,7 +52,6 @@ type
     function Connect(AFrom, ATo: TWwStructure; ARank, AMaxSteps: Integer;
       ACrossable: TWwStructure): TWwCorridor;
     procedure LinkStructures(ACorridor: TWwCorridor; AOther: TWwStructure);
-    function RegisterTouches(ACorridor: TWwCorridor): Integer;
     function AddRoom(AKind: TWwRoomKind; AAnchor: TWwStructure; AAnchorX, AAnchorY,
       AAnchorSize, ARank: Integer): TWwRoom;
     function AddFork(AAnchor: TWwRoom; ARank: Integer): TWwFork;
@@ -65,7 +64,6 @@ type
     procedure BuildForks;
     procedure BuildCycles;
     procedure PlaceStairs;
-    function CheckConnectivity: Boolean;
     function TryBuild(ALevelNo: Integer; ASeed: QWord; AAttempt: Integer): TWwLevel;
   public
     constructor Create(const AGeometryScript: string);
@@ -277,9 +275,10 @@ begin
   Result := ASX >= 0;
 end;
 
-{ Явная связь коридора с его концом. Нужна отдельно от RegisterTouches:
-  конечная комната добавляется в уровень только после успешной прокладки,
-  поэтому по владельцу клетки её ещё не найти. }
+{ Связь коридора с его концом. Список связей — это записанный замысел
+  постройки, а не обход карты: тогда проверка «всякое касание на карте
+  зарегистрировано» на стороне R остаётся независимой, а не сверяет карту
+  сама с собой. }
 procedure TWwGenerator.LinkStructures(ACorridor: TWwCorridor; AOther: TWwStructure);
 begin
   if AOther = nil then Exit;
@@ -289,37 +288,6 @@ begin
     FLevel.AddLink(ACorridor.Id, AOther.Id, wlkFork)
   else
     FLevel.AddLink(ACorridor.Id, AOther.Id, wlkJunction);
-end;
-
-{ Регистрирует все касания коридора с чужими структурами. Благодаря CanStand
-  чужими здесь могут оказаться только разрешённые (запланированные) — но
-  связи выписываются явно, чтобы валидатор на R мог проверить это независимо. }
-function TWwGenerator.RegisterTouches(ACorridor: TWwCorridor): Integer;
-var
-  i, dx, dy, o, n: Integer;
-  s: TWwStructure;
-begin
-  n := 0;
-  for i := 0 to ACorridor.Cells.Count - 1 do
-    for dy := -1 to 1 do
-      for dx := -1 to 1 do
-      begin
-        o := FGrid.OwnerAt(ACorridor.Cells.X[i] + dx, ACorridor.Cells.Y[i] + dy);
-        if (o = WW_NO_OWNER) or (o = ACorridor.Id) then Continue;
-        s := FLevel.StructureById(o);
-        if s = nil then Continue;
-        if not FLevel.HasLink(ACorridor.Id, o) then
-        begin
-          if s is TWwRoom then
-            FLevel.AddLink(ACorridor.Id, o, wlkPortal)
-          else if s is TWwFork then
-            FLevel.AddLink(ACorridor.Id, o, wlkFork)
-          else
-            FLevel.AddLink(ACorridor.Id, o, wlkJunction);
-          Inc(n);
-        end;
-      end;
-  Result := n;
 end;
 
 function TWwGenerator.Connect(AFrom, ATo: TWwStructure; ARank, AMaxSteps: Integer;
@@ -369,7 +337,6 @@ begin
     FCorridors.Add(cor);
     LinkStructures(cor, AFrom);
     LinkStructures(cor, ATo);
-    RegisterTouches(cor);
     Result := cor;
   finally
     allowed.Free;
@@ -731,55 +698,11 @@ begin
   FLevel.SetStairs(ux, uy, dx2, dy2);
 end;
 
-function TWwGenerator.CheckConnectivity: Boolean;
-var
-  visited: array of Boolean;
-  queue: array of Integer;
-  head, tail, cur, x, y, nx, ny, dx, dy, total, seen: Integer;
-begin
-  total := FGrid.CountWalkable;
-  if total = 0 then
-  begin
-    Result := False;
-    Exit;
-  end;
-  SetLength(visited, FGrid.W * FGrid.H);
-  SetLength(queue, FGrid.W * FGrid.H);
-  head := 0;
-  tail := 0;
-  queue[tail] := FLevel.StairUpY * FGrid.W + FLevel.StairUpX;
-  Inc(tail);
-  visited[queue[0]] := True;
-  seen := 1;
-  while head < tail do
-  begin
-    cur := queue[head];
-    Inc(head);
-    x := cur mod FGrid.W;
-    y := cur div FGrid.W;
-    for dy := -1 to 1 do
-      for dx := -1 to 1 do
-      begin
-        if (dx = 0) and (dy = 0) then Continue;
-        nx := x + dx;
-        ny := y + dy;
-        if not FGrid.InBounds(nx, ny) then Continue;
-        if not FGrid.IsWalkable(nx, ny) then Continue;
-        if visited[ny * FGrid.W + nx] then Continue;
-        visited[ny * FGrid.W + nx] := True;
-        Inc(seen);
-        queue[tail] := ny * FGrid.W + nx;
-        Inc(tail);
-      end;
-  end;
-  Result := seen = total;
-end;
-
 function TWwGenerator.TryBuild(ALevelNo: Integer; ASeed: QWord; AAttempt: Integer): TWwLevel;
 var
   side: Integer;
   cropped: TWwGrid;
-  x, y, offX, offY: Integer;
+  x, y, offX, offY, reached, total, x0, y0, x1, y1: Integer;
 begin
   Result := nil;
   if FRng <> nil then FreeAndNil(FRng);
@@ -808,15 +731,19 @@ begin
   BuildCycles;
   PlaceStairs;
 
-  if not CheckConnectivity then
+  { Заливка от лестницы, вывод стен и рамка — одним обращением к R.
+    Не сошёлся охват — этаж распался на куски, значит попытка бракуется. }
+  if not FGeom.Finalize(FGrid, FLevel.StairUpX, FLevel.StairUpY,
+                        reached, total, x0, y0, x1, y1) then
   begin
     FreeAndNil(FLevel);
     FGrid := nil;
     Exit;
   end;
 
-  FGrid.DeriveWalls;
-  cropped := FGrid.CroppedCopy(1, offX, offY);
+  cropped := FGrid.CopyRegion(x0, y0, x1, y1);
+  offX := -x0;
+  offY := -y0;
   FLevel.ReplaceGrid(cropped);
   FLevel.ShiftStructures(offX, offY);
   FGrid := cropped;

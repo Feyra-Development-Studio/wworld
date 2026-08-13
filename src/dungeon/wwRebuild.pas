@@ -123,7 +123,7 @@ begin
     ordered.Free;
   end;
 
-  ALevel.Grid.DeriveWalls;
+  FGeom.ApplyWalls(ALevel.Grid);
   if (ALevel.StairUpX >= 0) then
     ALevel.Grid.PutCode(ALevel.StairUpX, ALevel.StairUpY, WW_STAIR_UP);
   if (ALevel.StairDownX >= 0) then

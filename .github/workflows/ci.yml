@@ -60,10 +60,10 @@ jobs:
             -Futhird_party/bearlibterminal/Terminal/Include/Pascal \
             -FU.bltunits src/dungeon/wwViewer.pas 2>&1 | tee logs/04-blt.log
 
-    - name: Дымовой тест геометрии на R
+    - name: Дымовой тест геометрии и топологии на R
       run: |
         set -euo pipefail
-        printf 'PING\nSHAPE circle 7\nBRUSH 3\nEXPAND 2 2 5 5 6 6\nQUIT\n' \
+        printf 'PING\nSHAPE circle 7\nBRUSH 3\nEXPAND 2 2 5 5 6 6\nWALLS 5 3 000000200000000\nFINALIZE 5 3 2 1 000000200000000\nQUIT\n' \
           | Rscript scripts/geometry.R 2>&1 | tee logs/05-geometry.log
 
     - name: Генерация 10 этажей

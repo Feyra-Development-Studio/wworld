@@ -16,7 +16,7 @@ unit wwRGeom;
 interface
 
 uses
-  SysUtils, Classes, Process, Contnrs, wwCore, wwShapes;
+  SysUtils, Classes, Process, Contnrs, wwCore, wwShapes, wwGrid;
 
 type
   EWwGeometry = class(Exception);
@@ -36,6 +36,9 @@ type
     function Build(ASpec: TWwShapeSpec): TWwShape;
     procedure BrushOffsets(ARank: Integer; AOut: TWwPointList);
     procedure ExpandPath(ARank: Integer; APath, AOut: TWwPointList);
+    procedure ApplyWalls(AGrid: TWwGrid);
+    function Finalize(AGrid: TWwGrid; ASX, ASY: Integer;
+      out AReached, ATotal, AX0, AY0, AX1, AY1: Integer): Boolean;
     property Calls: Integer read FCalls;
     property CacheHits: Integer read FHits;
   end;
@@ -167,6 +170,36 @@ begin
   n := StrToInt(parts[1]);
   for i := 0 to n - 1 do
     AOut.Add(StrToInt(parts[2 + i * 2]), StrToInt(parts[3 + i * 2]));
+end;
+
+{ Стены выводит R: это расширение маски прохода на монолит, то есть операция
+  над матрицей целиком. }
+procedure TWwGeometryClient.ApplyWalls(AGrid: TWwGrid);
+var
+  parts: TStringArray;
+begin
+  parts := Ask(Format('WALLS %d %d %s', [AGrid.W, AGrid.H, AGrid.AsDigits]), False).Split([' ']);
+  AGrid.ApplyDigits(parts[1]);
+end;
+
+{ Завершение этажа одним обращением: заливка от лестницы (проверка связности),
+  вывод стен и рамка непустой части. Всё это — операции над одной и той же
+  матрицей, поэтому и запрос один. }
+function TWwGeometryClient.Finalize(AGrid: TWwGrid; ASX, ASY: Integer;
+  out AReached, ATotal, AX0, AY0, AX1, AY1: Integer): Boolean;
+var
+  parts: TStringArray;
+begin
+  parts := Ask(Format('FINALIZE %d %d %d %d %s',
+    [AGrid.W, AGrid.H, ASX, ASY, AGrid.AsDigits]), False).Split([' ']);
+  AReached := StrToInt(parts[1]);
+  ATotal := StrToInt(parts[2]);
+  AX0 := StrToInt(parts[3]);
+  AY0 := StrToInt(parts[4]);
+  AX1 := StrToInt(parts[5]);
+  AY1 := StrToInt(parts[6]);
+  Result := (ATotal > 0) and (AReached = ATotal);
+  if Result then AGrid.ApplyDigits(parts[7]);
 end;
 
 end.
