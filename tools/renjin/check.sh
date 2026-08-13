@@ -29,11 +29,15 @@ JAR="$WORK/renjin-script-engine-$VERSION-jar-with-dependencies.jar"
 [ -f "$JAR" ] || curl -fsS "$NEXUS/$ART/$VERSION/renjin-script-engine-$VERSION-jar-with-dependencies.jar" -o "$JAR"
 ls -sh "$JAR"
 
-echo "== сборка движка =="
-mkdir -p "$WORK/classes"
-javac -cp "$JAR" -d "$WORK/classes" tools/renjin/RenjinHost.java
+echo "== библиотека org.json =="
+JSON="$WORK/json.jar"
+[ -f "$JSON" ] || curl -fsS "https://repo1.maven.org/maven2/org/json/json/20240303/json-20240303.jar" -o "$JSON"
 
-ENGINE="java -cp $JAR:$WORK/classes RenjinHost"
+echo "== сборка Java-части =="
+mkdir -p "$WORK/classes"
+javac -encoding UTF-8 -cp "$JAR:$JSON" -d "$WORK/classes" java/src/ru/wworld/*.java
+
+ENGINE="java -Dstdout.encoding=UTF-8 -cp $JAR:$JSON:$WORK/classes ru.wworld.RenjinHost"
 
 echo "== сверка ответов на наборе команд =="
 Rscript scripts/geometry.R < tools/renjin/commands.txt > "$WORK/gnu-r.txt"
@@ -54,10 +58,18 @@ tail -2 "$WORK/gen-gnu.log"
 tail -2 "$WORK/gen-renjin.log"
 
 echo "== сверка карт =="
-if diff -r "$WORK/out-gnu" "$WORK/out-renjin" > "$WORK/maps.diff" 2>&1; then
-  echo "СОВПАДАЕТ: подземелья при seed $SEED побайтово одинаковы на обоих движках"
-  exit 0
+if ! diff -r "$WORK/out-gnu" "$WORK/out-renjin" > "$WORK/maps.diff" 2>&1; then
+  echo "РАСХОЖДЕНИЕ в картах:"
+  head -30 "$WORK/maps.diff"
+  exit 1
 fi
-echo "РАСХОЖДЕНИЕ в картах:"
-head -30 "$WORK/maps.diff"
-exit 1
+echo "подземелья при seed $SEED побайтово одинаковы на обоих движках"
+
+# То же самое, но сборкой на Java: именно она поедет на Android, где
+# генератора не будет, а в приложении окажется только граф.
+echo "== сборка карты на Java из графа =="
+java -Dstdout.encoding=UTF-8 -cp "$JAR:$JSON:$WORK/classes" ru.wworld.RebuildCheck \
+     scripts/geometry.R "$WORK/out-gnu/dungeon.json" "$WORK/out-gnu/csv"
+
+echo "ВСЁ СОВПАЛО"
+exit 0
