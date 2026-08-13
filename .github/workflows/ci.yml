@@ -1,11 +1,18 @@
-name: dungeon generator (Pascal + R)
+name: build, test, release
 
 on: [push, pull_request]
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
+permissions:
+  contents: write
 
+env:
+  SEED: "20260813"
+
+jobs:
+
+  core:
+    name: тесты ядра
+    runs-on: ubuntu-latest
     defaults:
       run:
         shell: bash
@@ -15,9 +22,6 @@ jobs:
       with:
         submodules: recursive
 
-    # Каждый шаг пишет свой лог в logs/. При успехе артефактом уходят карты,
-    # при провале — логи вместо них. В репозитории результат генерации не
-    # хранится: он выводится из seed и всегда воспроизводим.
     - name: Окружение
       run: |
         set -euo pipefail
@@ -68,12 +72,10 @@ jobs:
 
     - name: Генерация 10 этажей
       # Основное хранилище — out/dungeon.json с графом-инструкцией. Флаг
-      # --test добавляет человекочитаемую выгрузку out/csv и сверяет обратную
-      # сборку: карта восстанавливается из JSON и сравнивается с исходной.
-      # Генерации нужен Rscript: формы и клетки коридоров считает geometry.R.
+      # --test добавляет выгрузку out/csv и сверяет обратную сборку.
       run: |
         set -euo pipefail
-        ./src/demo/demo --seed 20260813 --levels 10 --out out --test 2>&1 | tee logs/06-generate.log
+        ./src/demo/demo --seed "$SEED" --levels 10 --out out --test 2>&1 | tee logs/06-generate.log
 
     - name: Проверка инвариантов на R
       run: |
@@ -84,7 +86,7 @@ jobs:
       run: |
         set -euo pipefail
         {
-          ./src/demo/demo --seed 20260813 --levels 10 --out out_repeat --test
+          ./src/demo/demo --seed "$SEED" --levels 10 --out out_repeat --test
           diff -r out out_repeat && echo "детерминизм подтверждён"
         } 2>&1 | tee logs/08-determinism.log
         rm -rf out_repeat
@@ -110,7 +112,231 @@ jobs:
       if: failure()
       uses: actions/upload-artifact@v4
       with:
-        name: failure-logs
+        name: failure-logs-core
         path: logs/
         if-no-files-found: warn
         retention-days: 14
+
+  linux-packages:
+    name: пакеты Linux (deb, rpm)
+    needs: core
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Инструменты сборки
+      run: |
+        set -euo pipefail
+        mkdir -p logs
+        sudo apt-get update
+        sudo apt-get install -y fp-compiler fp-units-base fp-units-fcl rpm
+        sudo apt-get install -y --no-install-recommends r-base-core r-cran-codetools
+
+    - name: Версия
+      id: ver
+      run: echo "value=$(cat VERSION).${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
+    - name: Сборка пакетов
+      run: |
+        set -euo pipefail
+        packaging/build-linux.sh "${{ steps.ver.outputs.value }}" dist 2>&1 | tee logs/10-build-packages.log
+
+    # Проверяется не факт сборки, а установленная программа: пакет ставится в
+    # систему, и всё запускается из чужого каталога, где нет ни исходников,
+    # ни scripts/. Так ловится забытый в пакете ресурс.
+    - name: Установка и запуск deb
+      run: |
+        set -euo pipefail
+        {
+          sudo apt-get install -y ./dist/wworld_*_amd64.deb
+          dpkg -L wworld
+          cd /tmp
+          wworld --seed 4242 --levels 4 --out inst --test
+          Rscript /usr/share/wworld/validate_dungeon.R --dir inst/csv
+          wworld-walk --json inst/dungeon.json --script "ddss" | tail -1
+          wworld-walk --dir inst/csv --script "ddss" | tail -1
+        } 2>&1 | tee logs/11-deb-install.log
+
+    - name: Удаление deb
+      run: |
+        set -euo pipefail
+        sudo apt-get remove -y wworld 2>&1 | tee logs/12-deb-remove.log
+        test ! -e /usr/bin/wworld && echo "пакет снят начисто"
+
+    # rpm проверяется в родной системе: Fedora в контейнере на том же раннере
+    - name: Установка и запуск rpm в Fedora
+      run: |
+        set -euo pipefail
+        {
+          docker run --rm -v "$PWD/dist:/dist" fedora:40 bash -euo pipefail -c '
+            dnf install -y -q R-core >/dev/null
+            rpm -i /dist/wworld-*.x86_64.rpm
+            rpm -ql wworld
+            cd /tmp
+            wworld --seed 4242 --levels 4 --out inst --test
+            Rscript /usr/share/wworld/validate_dungeon.R --dir inst/csv
+            wworld-walk --dir inst/csv --script "ddss" | tail -1
+            rpm -e wworld
+            test ! -e /usr/bin/wworld && echo "пакет снят начисто"
+          '
+        } 2>&1 | tee logs/13-rpm-install.log
+
+    - name: Пакеты
+      if: success()
+      uses: actions/upload-artifact@v4
+      with:
+        name: linux-packages
+        path: dist/
+        if-no-files-found: error
+
+    - name: Логи (при провале)
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: failure-logs-linux
+        path: logs/
+        if-no-files-found: warn
+        retention-days: 14
+
+  windows-build:
+    name: сборка Windows (кросс)
+    needs: core
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Инструменты кросс-сборки
+      run: |
+        set -euo pipefail
+        mkdir -p logs
+        sudo apt-get update
+        # цель Win64 умеет тот же ppcx64, нужны только win-модули и линкер
+        sudo apt-get install -y fp-compiler fp-units-base fp-units-fcl zip \
+                                fp-units-win-base fp-units-win-fcl \
+                                binutils-mingw-w64-x86-64
+
+    - name: Версия
+      id: ver
+      run: echo "value=$(cat VERSION).${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
+    - name: Сборка zip
+      run: |
+        set -euo pipefail
+        packaging/build-windows.sh "${{ steps.ver.outputs.value }}" dist 2>&1 | tee logs/20-build-windows.log
+        file build/windows/wworld/wworld.exe
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: windows-zip
+        path: dist/
+        if-no-files-found: error
+
+    - name: Логи (при провале)
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: failure-logs-windows-build
+        path: logs/
+        if-no-files-found: warn
+
+  windows-test:
+    name: прогон на Windows
+    needs: windows-build
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+    - uses: actions/download-artifact@v4
+      with:
+        name: windows-zip
+        path: dist
+
+    - uses: r-lib/actions/setup-r@v2
+      with:
+        r-version: release
+
+    - name: Распаковка и запуск
+      run: |
+        set -euo pipefail
+        unzip -q dist/wworld_*_win64.zip -d run
+        cd run/wworld
+        Rscript --version
+        ./wworld.exe --seed 4242 --levels 4 --out out --test
+        Rscript validate_dungeon.R --dir out/csv
+        ./wworld-walk.exe --json out/dungeon.json --script "ddss" | tail -1
+        ./wworld-walk.exe --dir out/csv --script "ddss" | tail -1
+
+  release:
+    name: релиз
+    needs: [core, linux-packages, windows-test]
+    if: github.ref == 'refs/heads/tests' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.ver.outputs.tag }}
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Версия
+      id: ver
+      run: |
+        V="$(cat VERSION).${GITHUB_RUN_NUMBER}"
+        echo "value=$V" >> "$GITHUB_OUTPUT"
+        echo "tag=v$V" >> "$GITHUB_OUTPUT"
+
+    - uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+
+    - name: Сбор файлов релиза
+      run: |
+        set -euo pipefail
+        mkdir -p release
+        cp artifacts/linux-packages/* release/
+        cp artifacts/windows-zip/* release/
+        ( cd artifacts/dungeon && zip -qr "$GITHUB_WORKSPACE/release/dungeon-sample.zip" . )
+        ls -1sh release
+
+    - uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ steps.ver.outputs.tag }}
+        name: wworld ${{ steps.ver.outputs.value }}
+        body: |
+          Сборка из ветки `tests`, выложена после зелёных тестов: ядро
+          (генерация, инварианты на R, детерминизм, обратная сборка из JSON),
+          установка и запуск deb на Ubuntu и rpm на Fedora, прогон на Windows.
+
+          - `wworld_*_amd64.deb` — Ubuntu/Debian, требует `r-base-core`
+          - `wworld-*.x86_64.rpm` — Fedora/RHEL, требует `R-core`
+          - `wworld_*_win64.zip` — Windows x64, требует R с Rscript в PATH
+          - `dungeon-sample.zip` — пример выдачи: граф в JSON и выгрузка CSV
+
+          Android пока не собирается, разбор причин и план — в `docs/android.md`.
+        files: release/*
+        fail_on_unmatched_files: true
+
+  merge-main:
+    name: перенос tests в main
+    needs: release
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Перемотка main на tests
+      run: |
+        set -euo pipefail
+        git push origin "HEAD:refs/heads/main"
+        echo "main переведён на ${{ needs.release.outputs.tag }}"

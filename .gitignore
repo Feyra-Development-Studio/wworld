@@ -12,3 +12,7 @@ src/demo/wwwalk
 out/
 out_repeat/
 logs/
+
+# сборка пакетов
+build/
+dist/

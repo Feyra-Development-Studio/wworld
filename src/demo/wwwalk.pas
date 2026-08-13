@@ -20,13 +20,14 @@ program wwwalk;
 {$MODE OBJFPC}{$H+}
 
 uses
-  SysUtils, wwCore, wwGrid, wwSource, wwViewer;
+  SysUtils, wwPaths, wwCore, wwGrid, wwSource, wwViewer;
 
 type
   TWwWalkApp = class
   private
     FJson, FGeometry, FCsvDir, FScript: string;
     procedure ParseArgs;
+    function ResolveGeometry: string;
     function MakeSource: TWwMapSource;
   public
     constructor Create;
@@ -75,12 +76,24 @@ begin
   end;
 end;
 
+function TWwWalkApp.ResolveGeometry: string;
+var
+  assets: TWwAssets;
+begin
+  assets := TWwAssets.Create;
+  try
+    Result := assets.Resolve(FGeometry, 'geometry.R');
+  finally
+    assets.Free;
+  end;
+end;
+
 function TWwWalkApp.MakeSource: TWwMapSource;
 begin
   if FCsvDir <> '' then
     Result := TWwCsvSource.Create(FCsvDir)
   else
-    Result := TWwJsonSource.Create(FJson, FGeometry);
+    Result := TWwJsonSource.Create(FJson, ResolveGeometry);
 end;
 
 function TWwWalkApp.Run: Integer;

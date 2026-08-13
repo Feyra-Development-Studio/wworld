@@ -17,7 +17,7 @@ program demo;
 {$MODE OBJFPC}{$H+}
 
 uses
-  SysUtils, Classes, wwCore, wwGrid, wwStruct, wwGenerator, wwCsv, wwJson,
+  SysUtils, Classes, wwPaths, wwCore, wwGrid, wwStruct, wwGenerator, wwCsv, wwJson,
   wwRGeom, wwRebuild;
 
 type
@@ -31,6 +31,7 @@ type
     FTest: Boolean;
     FFingerprints: TStringList;
     procedure ParseArgs;
+    function ResolveGeometry: string;
     procedure DumpAscii(ALevel: TWwLevel);
     function JsonPath: string;
     function CsvDir: string;
@@ -96,6 +97,18 @@ begin
     else if a = '--test' then
       FTest := True;
     Inc(i);
+  end;
+end;
+
+function TWwApp.ResolveGeometry: string;
+var
+  assets: TWwAssets;
+begin
+  assets := TWwAssets.Create;
+  try
+    Result := assets.Resolve(FGeometry, 'geometry.R');
+  finally
+    assets.Free;
   end;
 end;
 
@@ -186,12 +199,12 @@ begin
   Writeln('wworld dungeon generator | seed=', FSeed, ' levels=', FLevels,
           ' out=', FOutDir, BoolToStr(FTest, ' [test]', ''));
   try
-    gen := TWwGenerator.Create(FGeometry);
+    gen := TWwGenerator.Create(ResolveGeometry);
   except
     on E: Exception do
     begin
       Writeln('геометрия на R недоступна: ', E.Message);
-      Writeln('нужен Rscript в PATH и файл ', FGeometry);
+      Writeln('нужен Rscript в PATH и файл ', ResolveGeometry);
       Result := 2;
       Exit;
     end;
