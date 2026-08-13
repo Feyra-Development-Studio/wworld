@@ -133,15 +133,18 @@ WwLevel <- setRefClass(
     unplannedTouches = function() {
       pairs <- adjacentPairs()
       if (nrow(pairs) == 0) return(pairs[0, ])
-      bad <- !mapply(linkRegistered, pairs$a, pairs$b)
+      # метод передаётся обёрткой, а не по имени: анализатор кода
+      # reference-классов видит только явные вызовы и иначе не установит
+      # метод в объект (см. также kindOf ниже)
+      bad <- !mapply(function(x, y) linkRegistered(x, y), pairs$a, pairs$b)
       pairs[bad, , drop = FALSE]
     },
 
     stuckRooms = function() {
       pairs <- adjacentPairs()
       if (nrow(pairs) == 0) return(pairs[0, ])
-      ka <- vapply(pairs$a, kindOf, character(1))
-      kb <- vapply(pairs$b, kindOf, character(1))
+      ka <- vapply(pairs$a, function(id) kindOf(id), character(1))
+      kb <- vapply(pairs$b, function(id) kindOf(id), character(1))
       pairs[ka %in% c("small", "medium", "large") &
             kb %in% c("small", "medium", "large"), , drop = FALSE]
     },
@@ -159,7 +162,8 @@ WwLevel <- setRefClass(
         ends <- c(cr$from_id, cr$to_id)
         er <- rooms[rooms$id %in% ends, ]
         if (nrow(er) > 0) {
-          want <- min(max(vapply(as.character(er$kind), rules$rankFor, numeric(1))),
+          want <- min(max(vapply(as.character(er$kind),
+                                 function(k) rules$rankFor(k), numeric(1))),
                       rules$maxRank())
           if (cr$rank != want) {
             out <- c(out, sprintf("коридор %d: ранг %d, ожидался %d по комнатам",

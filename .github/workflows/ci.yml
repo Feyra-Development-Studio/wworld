@@ -31,8 +31,10 @@ jobs:
           sudo apt-get update
           # fp-units-fcl нужен ради contnrs, одного fp-compiler не хватает
           sudo apt-get install -y fp-compiler fp-units-base fp-units-fcl
-          # r-base-core без recommends: рекомендованные тянут пол-CRAN
-          sudo apt-get install -y --no-install-recommends r-base-core
+          # r-base-core без recommends: рекомендованные тянут пол-CRAN.
+          # codetools ставим явно — без него reference-классы не проверяются
+          # и молча пропускают методы, переданные по имени
+          sudo apt-get install -y --no-install-recommends r-base-core r-cran-codetools
           fpc -iV
           Rscript --version
         } 2>&1 | tee logs/01-deps.log

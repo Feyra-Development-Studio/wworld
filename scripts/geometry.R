@@ -27,8 +27,9 @@
 
 suppressWarnings(suppressMessages(library(methods)))
 
-# setRefClass без пакета codetools сыплет предупреждениями в stderr —
-# на протокол они не влияют, но засоряют лог CI
+# Без пакета codetools setRefClass сыплет предупреждениями в stderr: на
+# протокол они не влияют, но засоряют лог. CI ставит codetools явно —
+# он не только убирает шум, но и включает анализ кода классов.
 options(warn = -1)
 
 WwShapeFactory <- suppressMessages(setRefClass(
@@ -77,7 +78,10 @@ WwShapeFactory <- suppressMessages(setRefClass(
         cols <- (oxs[i] + 1):(oxs[i] + ncol(part))
         m[rows, cols] <- m[rows, cols] | part
       }
-      list(mask = m, metric = sum(mapply(metric, types, ws, hs)))
+      # метод оборачивается, а не передаётся по имени: анализатор кода
+      # reference-классов ставит в объект только явно вызываемые методы
+      list(mask = m, metric = sum(mapply(function(t, w, h) metric(t, w, h),
+                                         types, ws, hs)))
     }
   )
 ))
