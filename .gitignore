@@ -1,9 +1,14 @@
+# сборка
 *.o
 *.ppu
 *.a
 *.compiled
 .bltunits/
-csv_repeat/
 src/demo/demo
 src/demo/wwwalk
-src/demo/wwtest
+
+# результат генерации: выводится из seed, в репозитории не хранится,
+# при успешном прогоне уходит артефактом dungeon-csv
+csv/
+csv_repeat/
+logs/
