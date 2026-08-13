@@ -29,6 +29,7 @@ type
     FMaxSteps: Integer;
     FPath: TWwPointList;
     FDirX, FDirY: array[0..7] of Integer;
+    FBrushOff: array[1..3] of TWwPointList;
     procedure Reset;
     procedure HeapPush(ANode: Integer);
     function HeapPop: Integer;
@@ -39,6 +40,7 @@ type
   public
     constructor Create(AGrid: TWwGrid);
     destructor Destroy; override;
+    procedure SetBrush(ARank: Integer; AOffsets: TWwPointList);
     procedure BrushCells(ACX, ACY: Integer; AOut: TWwPointList);
     function Route(AStartX, AStartY, AGoalOwner, AGoalX, AGoalY,
       ABrush, AMaxSteps: Integer; AAllowed: TWwIntList): Boolean;
@@ -48,6 +50,8 @@ type
 implementation
 
 constructor TWwRouter.Create(AGrid: TWwGrid);
+var
+  i: Integer;
 begin
   inherited Create;
   FGrid := AGrid;
@@ -61,6 +65,7 @@ begin
   SetLength(FState, FSize);
   SetLength(FHeap, FSize + 8);
   FPath := TWwPointList.Create;
+  for i := 1 to 3 do FBrushOff[i] := TWwPointList.Create;
   FDirX[0] :=  1; FDirY[0] :=  0;
   FDirX[1] :=  1; FDirY[1] :=  1;
   FDirX[2] :=  0; FDirY[2] :=  1;
@@ -72,7 +77,10 @@ begin
 end;
 
 destructor TWwRouter.Destroy;
+var
+  i: Integer;
 begin
+  for i := 1 to 3 do FBrushOff[i].Free;
   FPath.Free;
   inherited Destroy;
 end;
@@ -152,42 +160,37 @@ begin
   Result := 10 * (hi - lo) + 14 * lo;
 end;
 
-{ Кисть ранга: 1 -> 1x1, 2 -> 2x2, 3 -> 3x3 с центром в (cx,cy). }
+{ Кисти приходят из scripts/geometry.R: форму кисти задаёт R, маршрутизатор
+  только прикладывает готовый вектор смещений. }
+procedure TWwRouter.SetBrush(ARank: Integer; AOffsets: TWwPointList);
+var
+  i: Integer;
+begin
+  if (ARank < 1) or (ARank > 3) then Exit;
+  FBrushOff[ARank].Clear;
+  for i := 0 to AOffsets.Count - 1 do
+    FBrushOff[ARank].Add(AOffsets.X[i], AOffsets.Y[i]);
+end;
+
 procedure TWwRouter.BrushCells(ACX, ACY: Integer; AOut: TWwPointList);
 var
-  dx, dy: Integer;
+  i: Integer;
 begin
   AOut.Clear;
-  case FBrush of
-    1: AOut.Add(ACX, ACY);
-    2:
-      for dy := 0 to 1 do
-        for dx := 0 to 1 do
-          AOut.Add(ACX + dx, ACY + dy);
-  else
-    for dy := -1 to 1 do
-      for dx := -1 to 1 do
-        AOut.Add(ACX + dx, ACY + dy);
-  end;
+  for i := 0 to FBrushOff[FBrush].Count - 1 do
+    AOut.Add(ACX + FBrushOff[FBrush].X[i], ACY + FBrushOff[FBrush].Y[i]);
 end;
 
 function TWwRouter.CanStand(AX, AY: Integer): Boolean;
 var
-  dx, dy, x0, y0, x1, y1: Integer;
+  i: Integer;
 begin
-  case FBrush of
-    1: begin x0 := 0; y0 := 0; x1 := 0; y1 := 0; end;
-    2: begin x0 := 0; y0 := 0; x1 := 1; y1 := 1; end;
-  else
-    begin x0 := -1; y0 := -1; x1 := 1; y1 := 1; end;
-  end;
-  for dy := y0 to y1 do
-    for dx := x0 to x1 do
-      if not FGrid.CanOccupy(AX + dx, AY + dy, FAllowed) then
-      begin
-        Result := False;
-        Exit;
-      end;
+  for i := 0 to FBrushOff[FBrush].Count - 1 do
+    if not FGrid.CanOccupy(AX + FBrushOff[FBrush].X[i], AY + FBrushOff[FBrush].Y[i], FAllowed) then
+    begin
+      Result := False;
+      Exit;
+    end;
   Result := True;
 end;
 
@@ -225,6 +228,8 @@ var
   startNode, cur, nx, ny, nn, d, step, ng, prevDir, curDir: Integer;
 begin
   FBrush := ABrush;
+  if (FBrush < 1) or (FBrush > 3) or (FBrushOff[FBrush].Count = 0) then
+    raise Exception.CreateFmt('кисть ранга %d не загружена из R', [ABrush]);
   FAllowed := AAllowed;
   FGoalOwner := AGoalOwner;
   FGoalX := AGoalX;

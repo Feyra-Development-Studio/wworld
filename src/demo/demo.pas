@@ -12,7 +12,7 @@ program demo;
 {$MODE OBJFPC}{$H+}
 
 uses
-  SysUtils, wwCore, wwGrid, wwStruct, wwGenerator, wwCsv;
+  SysUtils, wwCore, wwGrid, wwStruct, wwGenerator, wwCsv, wwRGeom;
 
 type
   TWwApp = class
@@ -21,6 +21,7 @@ type
     FLevels: Integer;
     FOutDir: string;
     FDumpLevel: Integer;
+    FGeometry: string;
     procedure ParseArgs;
     procedure DumpAscii(ALevel: TWwLevel);
   public
@@ -35,6 +36,7 @@ begin
   FLevels := 10;
   FOutDir := 'csv';
   FDumpLevel := 0;
+  FGeometry := 'scripts/geometry.R';
 end;
 
 procedure TWwApp.ParseArgs;
@@ -59,6 +61,11 @@ begin
     else if (a = '--out') and (i < ParamCount) then
     begin
       FOutDir := ParamStr(i + 1);
+      Inc(i);
+    end
+    else if (a = '--geometry') and (i < ParamCount) then
+    begin
+      FGeometry := ParamStr(i + 1);
       Inc(i);
     end
     else if (a = '--dump') and (i < ParamCount) then
@@ -104,7 +111,17 @@ var
 begin
   ParseArgs;
   Writeln('wworld dungeon generator | seed=', FSeed, ' levels=', FLevels, ' out=', FOutDir);
-  gen := TWwGenerator.Create;
+  try
+    gen := TWwGenerator.Create(FGeometry);
+  except
+    on E: Exception do
+    begin
+      Writeln('геометрия на R недоступна: ', E.Message);
+      Writeln('нужен Rscript в PATH и файл ', FGeometry);
+      Result := 2;
+      Exit;
+    end;
+  end;
   writer := TWwCsvWriter.Create(FOutDir);
   failed := 0;
   try
@@ -123,6 +140,8 @@ begin
     end;
     writer.Flush;
   finally
+    Writeln(Format('геометрия на R: запросов %d, из кеша %d',
+      [gen.Geometry.Calls, gen.Geometry.CacheHits]));
     writer.Free;
     gen.Free;
   end;

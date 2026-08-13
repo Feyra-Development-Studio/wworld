@@ -22,12 +22,13 @@ unit wwGenerator;
 interface
 
 uses
-  SysUtils, Math, Contnrs, wwCore, wwShapes, wwGrid, wwStruct, wwRules, wwRouter;
+  SysUtils, Math, Contnrs, wwCore, wwShapes, wwGrid, wwStruct, wwRules, wwRouter, wwRGeom;
 
 type
   TWwGenerator = class
   private
     FRules: TWwLevelRules;
+    FGeom: TWwGeometryClient;
     FRng: TWwRandom;
     FLevel: TWwLevel;
     FGrid: TWwGrid;
@@ -41,6 +42,9 @@ type
     function CanvasSide: Integer;
     function MakeShape(AKind: TWwRoomKind; AAllowComposite: Boolean): TWwShape;
     function MakeSimpleShape(AMinSide, AMaxSide: Integer): TWwShape;
+    procedure RollShapeSpec(AMinSide, AMaxSide: Integer; out AType: string;
+      out AW, AH: Integer);
+    procedure LoadBrushes;
     function PlaceRoomAt(AKind: TWwRoomKind; AShape: TWwShape; AX0, AY0: Integer): TWwRoom;
     function PickStartCell(AFrom: TWwStructure; ATargetX, ATargetY, ABrush: Integer;
       AAllowed: TWwIntList; out ASX, ASY: Integer): Boolean;
@@ -63,17 +67,19 @@ type
     function CheckConnectivity: Boolean;
     function TryBuild(ALevelNo: Integer; ASeed: QWord; AAttempt: Integer): TWwLevel;
   public
-    constructor Create;
+    constructor Create(const AGeometryScript: string);
     destructor Destroy; override;
     function Generate(ALevelNo: Integer; ASeed: QWord): TWwLevel;
     property Report: string read FReport;
+    property Geometry: TWwGeometryClient read FGeom;
   end;
 
 implementation
 
-constructor TWwGenerator.Create;
+constructor TWwGenerator.Create(const AGeometryScript: string);
 begin
   inherited Create;
+  FGeom := TWwGeometryClient.Create(AGeometryScript);
   FRules := nil;
   FRng := nil;
   FRouter := nil;
@@ -88,6 +94,7 @@ begin
   if FRules <> nil then FRules.Free;
   if FRng <> nil then FRng.Free;
   if FRouter <> nil then FRouter.Free;
+  FGeom.Free;
   inherited Destroy;
 end;
 
@@ -107,21 +114,51 @@ begin
   Result := Round(Sqrt(area) * 3.4) + 44;
 end;
 
-function TWwGenerator.MakeSimpleShape(AMinSide, AMaxSide: Integer): TWwShape;
+{ Розыгрыш типа и размеров остаётся на Pascal — вся случайность живёт в
+  одном ГПСЧ, иначе воспроизводимость по seed рассыпется. Саму форму строит R. }
+procedure TWwGenerator.RollShapeSpec(AMinSide, AMaxSide: Integer; out AType: string;
+  out AW, AH: Integer);
 var
-  w, h, roll: Integer;
+  roll: Integer;
 begin
-  w := FRng.NextInt(AMinSide, AMaxSide);
-  h := FRng.NextInt(AMinSide, AMaxSide);
+  AW := FRng.NextInt(AMinSide, AMaxSide);
+  AH := FRng.NextInt(AMinSide, AMaxSide);
   roll := FRng.NextInt(1, 100);
   if roll <= 35 then
-    Result := TWwRectShape.Create(w, h)
+    AType := 'rect'
   else if roll <= 55 then
-    Result := TWwRectShape.Create(w, w)
+    AType := 'square'
   else if roll <= 80 then
-    Result := TWwEllipseShape.Create(w, h)
+    AType := 'ellipse'
   else
-    Result := TWwEllipseShape.Create(w, w);
+    AType := 'circle';
+  if (AType = 'square') or (AType = 'circle') then AH := AW;
+end;
+
+function TWwGenerator.MakeSimpleShape(AMinSide, AMaxSide: Integer): TWwShape;
+var
+  t: string;
+  w, h: Integer;
+begin
+  RollShapeSpec(AMinSide, AMaxSide, t, w, h);
+  Result := FGeom.Shape(t, w, h);
+end;
+
+procedure TWwGenerator.LoadBrushes;
+var
+  off: TWwPointList;
+  r: Integer;
+begin
+  off := TWwPointList.Create;
+  try
+    for r := 1 to 3 do
+    begin
+      FGeom.BrushOffsets(r, off);
+      FRouter.SetBrush(r, off);
+    end;
+  finally
+    off.Free;
+  end;
 end;
 
 { Составная комната: несколько намеренно наложенных частей считаются одной
@@ -129,11 +166,8 @@ end;
   не должен превышать максимум для своего типа. }
 function TWwGenerator.MakeShape(AKind: TWwRoomKind; AAllowComposite: Boolean): TWwShape;
 var
-  comp: TWwCompositeShape;
-  parts, i, budget, per, minSide, ox, oy, dir: Integer;
-  part: TWwShape;
-  prev: TWwShape;
-  prevOx, prevOy: Integer;
+  parts, i, budget, per, minSide, ox, oy, dir, pw, ph, prevW, prevH, prevOx, prevOy: Integer;
+  ptype, spec: string;
 begin
   minSide := FRules.MinSideFor(AKind);
   if (not AAllowComposite) or (not FRules.AllowComposite) or (not FRng.Chance(40)) then
@@ -152,14 +186,15 @@ begin
     Exit;
   end;
 
-  comp := TWwCompositeShape.Create;
-  prev := nil;
+  spec := '';
+  prevW := 0;
+  prevH := 0;
   prevOx := 0;
   prevOy := 0;
   for i := 0 to parts - 1 do
   begin
-    part := MakeSimpleShape(3, per);
-    if prev = nil then
+    RollShapeSpec(3, per, ptype, pw, ph);
+    if i = 0 then
     begin
       ox := 0;
       oy := 0;
@@ -168,20 +203,22 @@ begin
     begin
       dir := FRng.NextInt(0, 3);
       case dir of
-        0: begin ox := prevOx + prev.W - FRng.NextInt(1, 2); oy := prevOy + FRng.NextInt(-1, 1); end;
-        1: begin ox := prevOx - part.W + FRng.NextInt(1, 2); oy := prevOy + FRng.NextInt(-1, 1); end;
-        2: begin ox := prevOx + FRng.NextInt(-1, 1); oy := prevOy + prev.H - FRng.NextInt(1, 2); end;
+        0: begin ox := prevOx + prevW - FRng.NextInt(1, 2); oy := prevOy + FRng.NextInt(-1, 1); end;
+        1: begin ox := prevOx - pw + FRng.NextInt(1, 2); oy := prevOy + FRng.NextInt(-1, 1); end;
+        2: begin ox := prevOx + FRng.NextInt(-1, 1); oy := prevOy + prevH - FRng.NextInt(1, 2); end;
       else
-        begin ox := prevOx + FRng.NextInt(-1, 1); oy := prevOy - part.H + FRng.NextInt(1, 2); end;
+        begin ox := prevOx + FRng.NextInt(-1, 1); oy := prevOy - ph + FRng.NextInt(1, 2); end;
       end;
     end;
-    comp.AddPart(part, ox, oy);
-    prev := part;
+    spec := spec + Format('%s %d %d %d %d', [ptype, pw, ph, ox, oy]);
+    if i < parts - 1 then spec := spec + ' ';
+    prevW := pw;
+    prevH := ph;
     prevOx := ox;
     prevOy := oy;
   end;
-  comp.Normalize;
-  Result := comp;
+  { смещения могут быть отрицательными — bbox нормализует R }
+  Result := FGeom.Composite(spec, parts);
 end;
 
 function TWwGenerator.PlaceRoomAt(AKind: TWwRoomKind; AShape: TWwShape; AX0, AY0: Integer): TWwRoom;
@@ -220,31 +257,21 @@ function TWwGenerator.PickStartCell(AFrom: TWwStructure; ATargetX, ATargetY, ABr
   AAllowed: TWwIntList; out ASX, ASY: Integer): Boolean;
 var
   i, d, best, x, y: Integer;
-  probe: TWwPointList;
 begin
   best := MaxInt;
   ASX := -1;
   ASY := -1;
-  probe := TWwPointList.Create;
-  try
-    for i := 0 to AFrom.Cells.Count - 1 do
+  for i := 0 to AFrom.Cells.Count - 1 do
+  begin
+    x := AFrom.Cells.X[i];
+    y := AFrom.Cells.Y[i];
+    d := Sqr(x - ATargetX) + Sqr(y - ATargetY);
+    if (d < best) and FGrid.CanOccupy(x, y, AAllowed) then
     begin
-      x := AFrom.Cells.X[i];
-      y := AFrom.Cells.Y[i];
-      d := Sqr(x - ATargetX) + Sqr(y - ATargetY);
-      if d < best then
-      begin
-        FRouter.BrushCells(x, y, probe);
-        if FGrid.CanOccupy(x, y, AAllowed) then
-        begin
-          best := d;
-          ASX := x;
-          ASY := y;
-        end;
-      end;
+      best := d;
+      ASX := x;
+      ASY := y;
     end;
-  finally
-    probe.Free;
   end;
   Result := ASX >= 0;
 end;
@@ -315,27 +342,26 @@ begin
 
     cor := TWwCorridor.Create(NewId, ARank, AFrom.Id, ATo.Id);
     for i := 0 to FRouter.Path.Count - 1 do
-    begin
       cor.Path.Add(FRouter.Path.X[i], FRouter.Path.Y[i]);
-      FRouter.BrushCells(FRouter.Path.X[i], FRouter.Path.Y[i], brush);
-      for j := 0 to brush.Count - 1 do
+    { осевая линия разворачивается в вектор клеток на R }
+    FGeom.ExpandPath(ARank, cor.Path, brush);
+    for j := 0 to brush.Count - 1 do
+    begin
+      cx := brush.X[j];
+      cy := brush.Y[j];
+      if not FGrid.InBounds(cx, cy) then Continue;
+      o := FGrid.OwnerAt(cx, cy);
+      if o = WW_NO_OWNER then
       begin
-        cx := brush.X[j];
-        cy := brush.Y[j];
-        if not FGrid.InBounds(cx, cy) then Continue;
-        o := FGrid.OwnerAt(cx, cy);
-        if o = WW_NO_OWNER then
-        begin
-          FGrid.Put(cx, cy, cor.CodeForRank, cor.Id);
-          cor.Cells.Add(cx, cy);
-        end
-        else if (ACrossable <> nil) and (o = ACrossable.Id) then
-        begin
-          { запланированное пересечение: клетка остаётся за прежним владельцем,
-            но помечается как перекрёсток }
-          FGrid.PutCode(cx, cy, WW_JUNCTION);
-          FLevel.AddLink(cor.Id, o, wlkJunction);
-        end;
+        FGrid.Put(cx, cy, cor.CodeForRank, cor.Id);
+        cor.Cells.Add(cx, cy);
+      end
+      else if (ACrossable <> nil) and (o = ACrossable.Id) then
+      begin
+        { запланированное пересечение: клетка остаётся за прежним владельцем,
+          но помечается как перекрёсток }
+        FGrid.PutCode(cx, cy, WW_JUNCTION);
+        FLevel.AddLink(cor.Id, o, wlkJunction);
       end;
     end;
     FLevel.AddStructure(cor);
@@ -762,6 +788,7 @@ begin
   side := CanvasSide;
   FGrid := TWwGrid.Create(side, side);
   FRouter := TWwRouter.Create(FGrid);
+  LoadBrushes;
   FLevel := TWwLevel.Create(ALevelNo, ASeed);
   FLevel.Grid := FGrid;
 

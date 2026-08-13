@@ -32,7 +32,14 @@ jobs:
             -Futhird_party/bearlibterminal/Terminal/Include/Pascal \
             -FU.bltunits src/dungeon/wwViewer.pas
 
+    - name: Geometry server smoke test (R)
+      run: |
+        printf 'PING\nSHAPE circle 7\nBRUSH 3\nEXPAND 2 2 5 5 6 6\nQUIT\n' \
+          | Rscript scripts/geometry.R
+
     - name: Generate 10 levels
+      # генерация требует Rscript: формы комнат и клетки коридоров считает
+      # scripts/geometry.R, поднимаемый как постоянный процесс
       run: ./src/demo/demo --seed 20260813 --levels 10 --out csv
 
     - name: Validate invariants (R)
