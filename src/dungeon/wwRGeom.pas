@@ -33,8 +33,7 @@ type
   public
     constructor Create(const AScriptPath: string);
     destructor Destroy; override;
-    function Shape(const AType: string; AW, AH: Integer): TWwShape;
-    function Composite(const ASpec: string; APartCount: Integer): TWwShape;
+    function Build(ASpec: TWwShapeSpec): TWwShape;
     procedure BrushOffsets(ARank: Integer; AOut: TWwPointList);
     procedure ExpandPath(ARank: Integer; APath, AOut: TWwPointList);
     property Calls: Integer read FCalls;
@@ -135,21 +134,11 @@ begin
     StrToInt(parts[3]), parts[4]);
 end;
 
-function TWwGeometryClient.Shape(const AType: string; AW, AH: Integer): TWwShape;
-var
-  req: string;
+{ Форма строится по инструкции: спецификация сама знает, во что она
+  разворачивается на стороне R. }
+function TWwGeometryClient.Build(ASpec: TWwShapeSpec): TWwShape;
 begin
-  if (AType = 'square') or (AType = 'circle') then
-    req := Format('SHAPE %s %d', [AType, AW])
-  else
-    req := Format('SHAPE %s %d %d', [AType, AW, AH]);
-  Result := ShapeFromReply(AType, Ask(req, True));
-end;
-
-function TWwGeometryClient.Composite(const ASpec: string; APartCount: Integer): TWwShape;
-begin
-  Result := ShapeFromReply('composite',
-    Ask(Format('COMPOSITE %d %s', [APartCount, ASpec]), True));
+  Result := ShapeFromReply(ASpec.ShapeName, Ask(ASpec.Request, True));
 end;
 
 procedure TWwGeometryClient.BrushOffsets(ARank: Integer; AOut: TWwPointList);

@@ -10,7 +10,7 @@ unit wwGrid;
 interface
 
 uses
-  SysUtils, wwCore;
+  SysUtils, Classes, wwCore;
 
 type
   TWwGrid = class
@@ -32,7 +32,9 @@ type
     procedure DeriveWalls;
     function IsWalkable(AX, AY: Integer): Boolean;
     function CountWalkable: Integer;
-    function CroppedCopy(AMargin: Integer): TWwGrid;
+    function CroppedCopy(AMargin: Integer; out AOffX, AOffY: Integer): TWwGrid;
+    function AsText: string;
+    function SameAs(AOther: TWwGrid): Boolean;
     property W: Integer read FW;
     property H: Integer read FH;
   end;
@@ -167,7 +169,7 @@ begin
       end;
 end;
 
-function TWwGrid.CroppedCopy(AMargin: Integer): TWwGrid;
+function TWwGrid.CroppedCopy(AMargin: Integer; out AOffX, AOffY: Integer): TWwGrid;
 var
   x, y, minX, minY, maxX, maxY, nw, nh: Integer;
   g: TWwGrid;
@@ -185,6 +187,8 @@ begin
         if x > maxX then maxX := x;
         if y > maxY then maxY := y;
       end;
+  AOffX := 0;
+  AOffY := 0;
   if not found then
   begin
     Result := TWwGrid.Create(1, 1);
@@ -194,6 +198,8 @@ begin
   minY := minY - AMargin; if minY < 0 then minY := 0;
   maxX := maxX + AMargin; if maxX > FW - 1 then maxX := FW - 1;
   maxY := maxY + AMargin; if maxY > FH - 1 then maxY := FH - 1;
+  AOffX := -minX;
+  AOffY := -minY;
   nw := maxX - minX + 1;
   nh := maxY - minY + 1;
   g := TWwGrid.Create(nw, nh);
@@ -201,6 +207,38 @@ begin
     for x := 0 to nw - 1 do
       g.Put(x, y, FCode[Index(minX + x, minY + y)], FOwner[Index(minX + x, minY + y)]);
   Result := g;
+end;
+
+{ Матрица кодов строками — и для CSV, и для сверки восстановленной карты
+  с исходной. }
+function TWwGrid.AsText: string;
+var
+  x, y: Integer;
+  sb: TStringList;
+  row: string;
+begin
+  sb := TStringList.Create;
+  try
+    for y := 0 to FH - 1 do
+    begin
+      row := '';
+      for x := 0 to FW - 1 do
+      begin
+        if x > 0 then row := row + ',';
+        row := row + IntToStr(FCode[Index(x, y)]);
+      end;
+      sb.Add(row);
+    end;
+    Result := sb.Text;
+  finally
+    sb.Free;
+  end;
+end;
+
+function TWwGrid.SameAs(AOther: TWwGrid): Boolean;
+begin
+  Result := (AOther <> nil) and (AOther.W = FW) and (AOther.H = FH) and
+            (AOther.AsText = AsText);
 end;
 
 end.

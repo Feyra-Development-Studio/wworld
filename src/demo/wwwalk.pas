@@ -1,12 +1,18 @@
 program wwwalk;
-{ Ходилка по выгруженному подземелью.
+{ Ходилка по подземелью.
 
-    wwwalk [--dir csv] [--script "sssdd>"]
+    wwwalk [--json out/dungeon.json] [--geometry scripts/geometry.R]
+    wwwalk --dir out/csv
+    wwwalk ... --script "sssdd>"
 
-  По умолчанию — интерактивный терминальный режим. --script прогоняет
-  последовательность клавиш без ввода (нужно для CI) и печатает итоговый
-  экран. Сборка с BearLibTerminal:
+  По умолчанию читается основное хранилище — граф в JSON, и карта строится
+  заново геометрией на R (значит, нужен Rscript). С флагом --dir берётся
+  тестовая выгрузка CSV: там лежит готовый растр и R не нужен.
 
+  Управление: WASD и QEZC, '>' и '<' на клетке лестницы, Esc — выход.
+  --script прогоняет последовательность клавиш без ввода, для CI.
+
+  Сборка с BearLibTerminal:
     fpc -dUSE_BLT -Fusrc/dungeon \
         -Futhird_party/bearlibterminal/Terminal/Include/Pascal \
         src/demo/wwwalk.pas }
@@ -14,39 +20,53 @@ program wwwalk;
 {$MODE OBJFPC}{$H+}
 
 uses
-  SysUtils, wwCore, wwGrid, wwCsv, wwViewer;
+  SysUtils, wwCore, wwGrid, wwSource, wwViewer;
 
 type
   TWwWalkApp = class
   private
-    FDir: string;
-    FScript: string;
+    FJson, FGeometry, FCsvDir, FScript: string;
     procedure ParseArgs;
+    function MakeSource: TWwMapSource;
   public
     constructor Create;
-    procedure Run;
+    function Run: Integer;
   end;
 
 constructor TWwWalkApp.Create;
 begin
   inherited Create;
-  FDir := 'csv';
+  FJson := 'out/dungeon.json';
+  FGeometry := 'scripts/geometry.R';
+  FCsvDir := '';
   FScript := '';
 end;
 
 procedure TWwWalkApp.ParseArgs;
 var
   i: Integer;
+  a: string;
 begin
   i := 1;
   while i <= ParamCount do
   begin
-    if (ParamStr(i) = '--dir') and (i < ParamCount) then
+    a := ParamStr(i);
+    if (a = '--json') and (i < ParamCount) then
     begin
-      FDir := ParamStr(i + 1);
+      FJson := ParamStr(i + 1);
       Inc(i);
     end
-    else if (ParamStr(i) = '--script') and (i < ParamCount) then
+    else if (a = '--dir') and (i < ParamCount) then
+    begin
+      FCsvDir := ParamStr(i + 1);
+      Inc(i);
+    end
+    else if (a = '--geometry') and (i < ParamCount) then
+    begin
+      FGeometry := ParamStr(i + 1);
+      Inc(i);
+    end
+    else if (a = '--script') and (i < ParamCount) then
     begin
       FScript := ParamStr(i + 1);
       Inc(i);
@@ -55,15 +75,36 @@ begin
   end;
 end;
 
-procedure TWwWalkApp.Run;
+function TWwWalkApp.MakeSource: TWwMapSource;
+begin
+  if FCsvDir <> '' then
+    Result := TWwCsvSource.Create(FCsvDir)
+  else
+    Result := TWwJsonSource.Create(FJson, FGeometry);
+end;
+
+function TWwWalkApp.Run: Integer;
 var
+  source: TWwMapSource;
   viewer: TWwViewer;
 begin
   ParseArgs;
+  try
+    source := MakeSource;
+  except
+    on E: Exception do
+    begin
+      Writeln('не удалось открыть подземелье: ', E.Message);
+      Result := 2;
+      Exit;
+    end;
+  end;
+  Writeln('источник — ', source.Describe);
+
   {$IFDEF USE_BLT}
-  viewer := TWwBltViewer.Create(FDir);
+  viewer := TWwBltViewer.Create(source);
   {$ELSE}
-  viewer := TWwConsoleViewer.Create(FDir);
+  viewer := TWwConsoleViewer.Create(source);
   {$ENDIF}
   try
     if FScript <> '' then
@@ -73,6 +114,7 @@ begin
   finally
     viewer.Free;
   end;
+  Result := 0;
 end;
 
 var
@@ -80,7 +122,7 @@ var
 begin
   App := TWwWalkApp.Create;
   try
-    App.Run;
+    ExitCode := App.Run;
   finally
     App.Free;
   end;

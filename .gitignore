@@ -8,7 +8,7 @@ src/demo/demo
 src/demo/wwwalk
 
 # результат генерации: выводится из seed, в репозитории не хранится,
-# при успешном прогоне уходит артефактом dungeon-csv
-csv/
-csv_repeat/
+# при успешном прогоне уходит артефактом dungeon
+out/
+out_repeat/
 logs/

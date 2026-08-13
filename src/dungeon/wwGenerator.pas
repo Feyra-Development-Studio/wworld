@@ -40,12 +40,13 @@ type
     FReport: string;
     function NewId: Integer;
     function CanvasSide: Integer;
-    function MakeShape(AKind: TWwRoomKind; AAllowComposite: Boolean): TWwShape;
-    function MakeSimpleShape(AMinSide, AMaxSide: Integer): TWwShape;
+    function MakeSpec(AKind: TWwRoomKind; AAllowComposite: Boolean): TWwShapeSpec;
+    function MakeSimpleSpec(AMinSide, AMaxSide: Integer): TWwShapeSpec;
     procedure RollShapeSpec(AMinSide, AMaxSide: Integer; out AType: string;
       out AW, AH: Integer);
     procedure LoadBrushes;
-    function PlaceRoomAt(AKind: TWwRoomKind; AShape: TWwShape; AX0, AY0: Integer): TWwRoom;
+    function PlaceRoomAt(AKind: TWwRoomKind; ASpec: TWwShapeSpec; AShape: TWwShape;
+      AX0, AY0: Integer): TWwRoom;
     function PickStartCell(AFrom: TWwStructure; ATargetX, ATargetY, ABrush: Integer;
       AAllowed: TWwIntList; out ASX, ASY: Integer): Boolean;
     function Connect(AFrom, ATo: TWwStructure; ARank, AMaxSteps: Integer;
@@ -135,13 +136,14 @@ begin
   if (AType = 'square') or (AType = 'circle') then AH := AW;
 end;
 
-function TWwGenerator.MakeSimpleShape(AMinSide, AMaxSide: Integer): TWwShape;
+function TWwGenerator.MakeSimpleSpec(AMinSide, AMaxSide: Integer): TWwShapeSpec;
 var
   t: string;
   w, h: Integer;
 begin
   RollShapeSpec(AMinSide, AMaxSide, t, w, h);
-  Result := FGeom.Shape(t, w, h);
+  Result := TWwShapeSpec.Create;
+  Result.AddPart(t, w, h, 0, 0);
 end;
 
 procedure TWwGenerator.LoadBrushes;
@@ -164,15 +166,15 @@ end;
 { Составная комната: несколько намеренно наложенных частей считаются одной
   комнатой. Её размер = сумма длинных сторон/больших диаметров частей и
   не должен превышать максимум для своего типа. }
-function TWwGenerator.MakeShape(AKind: TWwRoomKind; AAllowComposite: Boolean): TWwShape;
+function TWwGenerator.MakeSpec(AKind: TWwRoomKind; AAllowComposite: Boolean): TWwShapeSpec;
 var
   parts, i, budget, per, minSide, ox, oy, dir, pw, ph, prevW, prevH, prevOx, prevOy: Integer;
-  ptype, spec: string;
+  ptype: string;
 begin
   minSide := FRules.MinSideFor(AKind);
   if (not AAllowComposite) or (not FRules.AllowComposite) or (not FRng.Chance(40)) then
   begin
-    Result := MakeSimpleShape(minSide, FRules.MaxSideFor(AKind));
+    Result := MakeSimpleSpec(minSide, FRules.MaxSideFor(AKind));
     Exit;
   end;
 
@@ -182,11 +184,11 @@ begin
   per := budget div parts;
   if per < 3 then
   begin
-    Result := MakeSimpleShape(minSide, budget);
+    Result := MakeSimpleSpec(minSide, budget);
     Exit;
   end;
 
-  spec := '';
+  Result := TWwShapeSpec.Create;
   prevW := 0;
   prevH := 0;
   prevOx := 0;
@@ -210,18 +212,17 @@ begin
         begin ox := prevOx + FRng.NextInt(-1, 1); oy := prevOy - ph + FRng.NextInt(1, 2); end;
       end;
     end;
-    spec := spec + Format('%s %d %d %d %d', [ptype, pw, ph, ox, oy]);
-    if i < parts - 1 then spec := spec + ' ';
+    { смещения могут быть отрицательными — bbox нормализует R }
+    Result.AddPart(ptype, pw, ph, ox, oy);
     prevW := pw;
     prevH := ph;
     prevOx := ox;
     prevOy := oy;
   end;
-  { смещения могут быть отрицательными — bbox нормализует R }
-  Result := FGeom.Composite(spec, parts);
 end;
 
-function TWwGenerator.PlaceRoomAt(AKind: TWwRoomKind; AShape: TWwShape; AX0, AY0: Integer): TWwRoom;
+function TWwGenerator.PlaceRoomAt(AKind: TWwRoomKind; ASpec: TWwShapeSpec; AShape: TWwShape;
+  AX0, AY0: Integer): TWwRoom;
 var
   x, y, id: Integer;
   room: TWwRoom;
@@ -236,7 +237,7 @@ begin
         if not FGrid.CanOccupy(AX0 + x, AY0 + y, nil) then Exit;
 
   id := NewId;
-  room := TWwRoom.Create(id, AKind, AShape, AX0, AY0);
+  room := TWwRoom.Create(id, AKind, ASpec, AShape, AX0, AY0);
   for y := 0 to AShape.H - 1 do
     for x := 0 to AShape.W - 1 do
       if AShape.Contains(x, y) then
@@ -381,6 +382,7 @@ function TWwGenerator.AddRoom(AKind: TWwRoomKind; AAnchor: TWwStructure; AAnchor
 var
   attempt, gap, maxLen, dist, x0, y0, cx, cy: Integer;
   ang: Double;
+  spec: TWwShapeSpec;
   shape: TWwShape;
   room: TWwRoom;
   cor: TWwCorridor;
@@ -388,7 +390,8 @@ begin
   Result := nil;
   for attempt := 1 to 90 do
   begin
-    shape := MakeShape(AKind, True);
+    spec := MakeSpec(AKind, True);
+    shape := FGeom.Build(spec);
     maxLen := FRules.MaxCorridorLength(shape.SizeMetric, AAnchorSize);
     gap := FRng.NextInt(3, maxLen - 4);
     dist := (AAnchorSize + shape.SizeMetric) div 2 + gap;
@@ -398,10 +401,11 @@ begin
     x0 := cx - shape.W div 2;
     y0 := cy - shape.H div 2;
 
-    room := PlaceRoomAt(AKind, shape, x0, y0);
+    room := PlaceRoomAt(AKind, spec, shape, x0, y0);
     if room = nil then
     begin
       shape.Free;
+      spec.Free;
       Continue;
     end;
 
@@ -472,6 +476,7 @@ begin
     if cor = nil then
     begin
       FGrid.EraseOwner(fork.Id);
+      FLevel.RemoveStructure(fork);
       Continue;
     end;
     Result := fork;
@@ -774,7 +779,7 @@ function TWwGenerator.TryBuild(ALevelNo: Integer; ASeed: QWord; AAttempt: Intege
 var
   side: Integer;
   cropped: TWwGrid;
-  x, y: Integer;
+  x, y, offX, offY: Integer;
 begin
   Result := nil;
   if FRng <> nil then FreeAndNil(FRng);
@@ -811,8 +816,9 @@ begin
   end;
 
   FGrid.DeriveWalls;
-  cropped := FGrid.CroppedCopy(1);
+  cropped := FGrid.CroppedCopy(1, offX, offY);
   FLevel.ReplaceGrid(cropped);
+  FLevel.ShiftStructures(offX, offY);
   FGrid := cropped;
   { пересчитать координаты лестниц в обрезанной сетке }
   for y := 0 to cropped.H - 1 do

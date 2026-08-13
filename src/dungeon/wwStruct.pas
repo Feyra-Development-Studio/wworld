@@ -18,6 +18,7 @@ type
     destructor Destroy; override;
     function CenterX: Integer;
     function CenterY: Integer;
+    procedure Shift(ADX, ADY: Integer); virtual;
     function TypeName: string; virtual; abstract;
     property Id: Integer read FId;
     property Cells: TWwPointList read FCells;
@@ -27,17 +28,22 @@ type
   private
     FKind: TWwRoomKind;
     FShape: TWwShape;
+    FSpec: TWwShapeSpec;
     FX0, FY0: Integer;
     FConnections: TWwIntList;
   public
-    constructor Create(AId: Integer; AKind: TWwRoomKind; AShape: TWwShape; AX0, AY0: Integer);
+    constructor Create(AId: Integer; AKind: TWwRoomKind; ASpec: TWwShapeSpec;
+      AShape: TWwShape; AX0, AY0: Integer);
     destructor Destroy; override;
     function TypeName: string; override;
     function KindName: string;
+    procedure Shift(ADX, ADY: Integer); override;
+    procedure AssignShape(AShape: TWwShape);
     function RequiredRank: Integer;
     function SizeMetric: Integer;
     property Kind: TWwRoomKind read FKind;
     property Shape: TWwShape read FShape;
+    property Spec: TWwShapeSpec read FSpec;
     property X0: Integer read FX0;
     property Y0: Integer read FY0;
     property Connections: TWwIntList read FConnections;
@@ -52,6 +58,7 @@ type
     constructor Create(AId, ARank, AFromId, AToId: Integer);
     destructor Destroy; override;
     function TypeName: string; override;
+    procedure Shift(ADX, ADY: Integer); override;
     function RankName: string;
     function CodeForRank: Byte;
     property Rank: Integer read FRank;
@@ -94,6 +101,7 @@ type
     constructor Create(ANumber: Integer; ASeed: QWord);
     destructor Destroy; override;
     procedure AddStructure(AStructure: TWwStructure);
+    procedure RemoveStructure(AStructure: TWwStructure);
     procedure AddLink(AA, AB: Integer; AKind: TWwLinkKind);
     function HasLink(AA, AB: Integer): Boolean;
     function StructureById(AId: Integer): TWwStructure;
@@ -102,6 +110,8 @@ type
     function LinkCount: Integer;
     function LinkAt(AIndex: Integer): TWwLink;
     procedure ReplaceGrid(AGrid: TWwGrid);
+    procedure ShiftStructures(ADX, ADY: Integer);
+    function SortedByIdCopy: TFPObjectList;
     procedure SetStairs(AUpX, AUpY, ADownX, ADownY: Integer);
     property Number: Integer read FNumber;
     property Seed: QWord read FSeed;
@@ -160,10 +170,12 @@ end;
 
 { TWwRoom }
 
-constructor TWwRoom.Create(AId: Integer; AKind: TWwRoomKind; AShape: TWwShape; AX0, AY0: Integer);
+constructor TWwRoom.Create(AId: Integer; AKind: TWwRoomKind; ASpec: TWwShapeSpec;
+  AShape: TWwShape; AX0, AY0: Integer);
 begin
   inherited Create(AId);
   FKind := AKind;
+  FSpec := ASpec;
   FShape := AShape;
   FX0 := AX0;
   FY0 := AY0;
@@ -173,13 +185,34 @@ end;
 destructor TWwRoom.Destroy;
 begin
   FShape.Free;
+  FSpec.Free;
   FConnections.Free;
   inherited Destroy;
+end;
+
+procedure TWwStructure.Shift(ADX, ADY: Integer);
+begin
+  FCells.Offset(ADX, ADY);
 end;
 
 function TWwRoom.TypeName: string;
 begin
   Result := 'room';
+end;
+
+procedure TWwRoom.Shift(ADX, ADY: Integer);
+begin
+  inherited Shift(ADX, ADY);
+  FX0 := FX0 + ADX;
+  FY0 := FY0 + ADY;
+end;
+
+{ При восстановлении из JSON комната создаётся без маски: её строит
+  TWwRebuilder запросом к геометрии по сохранённой спецификации. }
+procedure TWwRoom.AssignShape(AShape: TWwShape);
+begin
+  if FShape <> nil then FShape.Free;
+  FShape := AShape;
 end;
 
 function TWwRoom.KindName: string;
@@ -227,6 +260,12 @@ end;
 function TWwCorridor.TypeName: string;
 begin
   Result := 'corridor';
+end;
+
+procedure TWwCorridor.Shift(ADX, ADY: Integer);
+begin
+  inherited Shift(ADX, ADY);
+  FPath.Offset(ADX, ADY);
 end;
 
 function TWwCorridor.RankName: string;
@@ -308,6 +347,13 @@ begin
   FStructures.Add(AStructure);
 end;
 
+{ Откат неудавшейся постройки: структура должна исчезнуть не только с карты,
+  но и из графа, иначе в JSON уедет узел, которого на карте нет. }
+procedure TWwLevel.RemoveStructure(AStructure: TWwStructure);
+begin
+  FStructures.Remove(AStructure);
+end;
+
 procedure TWwLevel.AddLink(AA, AB: Integer; AKind: TWwLinkKind);
 begin
   if AA = AB then Exit;
@@ -371,6 +417,41 @@ end;
 function TWwLevel.LinkAt(AIndex: Integer): TWwLink;
 begin
   Result := TWwLink(FLinks[AIndex]);
+end;
+
+{ Порядок штамповки при восстановлении должен совпадать с порядком создания,
+  а идентификаторы выдаются по возрастанию — поэтому сортировка по id его и
+  воспроизводит. Список не владеет объектами. }
+function TWwLevel.SortedByIdCopy: TFPObjectList;
+var
+  i, j, best: Integer;
+  tmp: TObject;
+begin
+  Result := TFPObjectList.Create(False);
+  for i := 0 to FStructures.Count - 1 do Result.Add(FStructures[i]);
+  for i := 0 to Result.Count - 2 do
+  begin
+    best := i;
+    for j := i + 1 to Result.Count - 1 do
+      if TWwStructure(Result[j]).Id < TWwStructure(Result[best]).Id then best := j;
+    if best <> i then
+    begin
+      tmp := Result[i];
+      Result[i] := Result[best];
+      Result[best] := tmp;
+    end;
+  end;
+end;
+
+{ После обрезки холста координаты структур должны переехать вместе с сеткой,
+  иначе граф в JSON и растр окажутся в разных системах координат. }
+procedure TWwLevel.ShiftStructures(ADX, ADY: Integer);
+var
+  i: Integer;
+begin
+  if (ADX = 0) and (ADY = 0) then Exit;
+  for i := 0 to FStructures.Count - 1 do
+    TWwStructure(FStructures[i]).Shift(ADX, ADY);
 end;
 
 procedure TWwLevel.ReplaceGrid(AGrid: TWwGrid);

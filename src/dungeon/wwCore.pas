@@ -52,6 +52,7 @@ type
     constructor Create;
     procedure Add(AX, AY: Integer);
     procedure Clear;
+    procedure Offset(ADX, ADY: Integer);
     function Contains(AX, AY: Integer): Boolean;
     property Count: Integer read FCount;
     property X[AIndex: Integer]: Integer read GetX;
@@ -158,6 +159,17 @@ end;
 procedure TWwPointList.Clear;
 begin
   FCount := 0;
+end;
+
+procedure TWwPointList.Offset(ADX, ADY: Integer);
+var
+  i: Integer;
+begin
+  for i := 0 to FCount - 1 do
+  begin
+    FXs[i] := FXs[i] + ADX;
+    FYs[i] := FYs[i] + ADY;
+  end;
 end;
 
 function TWwPointList.Contains(AX, AY: Integer): Boolean;

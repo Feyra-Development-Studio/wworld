@@ -1,18 +1,24 @@
 program demo;
-{ wworld — генерация подземелья и экспорт в CSV.
+{ wworld — генерация подземелья.
 
-  Использование:
-    demo [--seed N] [--levels N] [--out DIR] [--dump L]
+    demo [--seed N] [--levels N] [--out DIR] [--test] [--dump L] [--geometry PATH]
 
-  Каждый этаж выгружается отдельным листом csv/level_NN.csv.
-  Генерация полностью детерминирована: одинаковый seed даёт побайтово
-  одинаковые файлы на любой машине (ГПСЧ собственный, RTL Random не
-  используется). }
+  По умолчанию пишется основное хранилище — DIR/dungeon.json: граф-инструкция
+  подземелья (seed, спецификации форм комнат, осевые линии коридоров, узлы,
+  связи, лестницы). Растр в нём не хранится: он выводим, его строит геометрия
+  на R.
+
+  С флагом --test дополнительно кладётся человекочитаемая выгрузка DIR/csv/
+  (каждый этаж отдельным листом) и выполняется сверка обратной сборки: карта
+  восстанавливается из записанного JSON и сравнивается с исходной клетка в
+  клетку. Расхождение означает, что графа для восстановления не хватает, и
+  прогон завершается с кодом 3. }
 
 {$MODE OBJFPC}{$H+}
 
 uses
-  SysUtils, wwCore, wwGrid, wwStruct, wwGenerator, wwCsv, wwRGeom;
+  SysUtils, Classes, wwCore, wwGrid, wwStruct, wwGenerator, wwCsv, wwJson,
+  wwRGeom, wwRebuild;
 
 type
   TWwApp = class
@@ -22,10 +28,16 @@ type
     FOutDir: string;
     FDumpLevel: Integer;
     FGeometry: string;
+    FTest: Boolean;
+    FFingerprints: TStringList;
     procedure ParseArgs;
     procedure DumpAscii(ALevel: TWwLevel);
+    function JsonPath: string;
+    function CsvDir: string;
+    function VerifyRoundtrip(AGeom: TWwGeometryClient): Boolean;
   public
     constructor Create;
+    destructor Destroy; override;
     function Run: Integer;
   end;
 
@@ -34,9 +46,17 @@ begin
   inherited Create;
   FSeed := 20260813;
   FLevels := 10;
-  FOutDir := 'csv';
+  FOutDir := 'out';
   FDumpLevel := 0;
   FGeometry := 'scripts/geometry.R';
+  FTest := False;
+  FFingerprints := TStringList.Create;
+end;
+
+destructor TWwApp.Destroy;
+begin
+  FFingerprints.Free;
+  inherited Destroy;
 end;
 
 procedure TWwApp.ParseArgs;
@@ -72,9 +92,21 @@ begin
     begin
       FDumpLevel := StrToInt(ParamStr(i + 1));
       Inc(i);
-    end;
+    end
+    else if a = '--test' then
+      FTest := True;
     Inc(i);
   end;
+end;
+
+function TWwApp.JsonPath: string;
+begin
+  Result := IncludeTrailingPathDelimiter(FOutDir) + 'dungeon.json';
+end;
+
+function TWwApp.CsvDir: string;
+begin
+  Result := IncludeTrailingPathDelimiter(FOutDir) + 'csv';
 end;
 
 procedure TWwApp.DumpAscii(ALevel: TWwLevel);
@@ -102,15 +134,57 @@ begin
   end;
 end;
 
+{ Сверка обратной сборки: JSON перечитывается с диска, карта строится заново
+  и сравнивается с исходной. }
+function TWwApp.VerifyRoundtrip(AGeom: TWwGeometryClient): Boolean;
+var
+  reader: TWwJsonReader;
+  rebuilder: TWwRebuilder;
+  lv: TWwLevel;
+  i, bad, total: Integer;
+begin
+  bad := 0;
+  total := 0;
+  reader := TWwJsonReader.Create(JsonPath);
+  rebuilder := TWwRebuilder.Create(AGeom);
+  try
+    total := reader.LevelCount;
+    for i := 0 to total - 1 do
+    begin
+      lv := reader.LevelAt(i);
+      try
+        rebuilder.Rebuild(lv);
+        if lv.Grid.AsText <> FFingerprints[i] then
+        begin
+          Writeln(Format('  этаж %d: восстановленная карта не совпала с исходной',
+            [lv.Number]));
+          Inc(bad);
+        end;
+      finally
+        lv.Free;
+      end;
+    end;
+  finally
+    rebuilder.Free;
+    reader.Free;
+  end;
+  if bad = 0 then
+    Writeln(Format('обратная сборка из JSON: %d этажей совпали клетка в клетку',
+      [total]));
+  Result := bad = 0;
+end;
+
 function TWwApp.Run: Integer;
 var
   gen: TWwGenerator;
-  writer: TWwCsvWriter;
+  json: TWwJsonWriter;
+  csv: TWwCsvWriter;
   lv: TWwLevel;
   i, failed: Integer;
 begin
   ParseArgs;
-  Writeln('wworld dungeon generator | seed=', FSeed, ' levels=', FLevels, ' out=', FOutDir);
+  Writeln('wworld dungeon generator | seed=', FSeed, ' levels=', FLevels,
+          ' out=', FOutDir, BoolToStr(FTest, ' [test]', ''));
   try
     gen := TWwGenerator.Create(FGeometry);
   except
@@ -122,7 +196,10 @@ begin
       Exit;
     end;
   end;
-  writer := TWwCsvWriter.Create(FOutDir);
+
+  json := TWwJsonWriter.Create(JsonPath, FSeed);
+  csv := nil;
+  if FTest then csv := TWwCsvWriter.Create(CsvDir);
   failed := 0;
   try
     for i := 1 to FLevels do
@@ -134,27 +211,40 @@ begin
         Inc(failed);
         Continue;
       end;
-      writer.AddLevel(lv);
+      json.AddLevel(lv);
+      if FTest then
+      begin
+        csv.AddLevel(lv);
+        FFingerprints.Add(lv.Grid.AsText);
+      end;
       if i = FDumpLevel then DumpAscii(lv);
       lv.Free;
     end;
-    writer.Flush;
+    json.Flush;
+    if FTest then csv.Flush;
   finally
-    Writeln(Format('геометрия на R: запросов %d, из кеша %d',
-      [gen.Geometry.Calls, gen.Geometry.CacheHits]));
-    writer.Free;
-    gen.Free;
+    if csv <> nil then csv.Free;
+    json.Free;
   end;
+
+  Result := 0;
   if failed > 0 then
   begin
-    Writeln('FAILED levels: ', failed);
+    Writeln('не сгенерировано этажей: ', failed);
     Result := 1;
   end
   else
   begin
-    Writeln('ok: ', FLevels, ' levels written to ', FOutDir);
-    Result := 0;
+    Writeln('записан граф: ', JsonPath);
+    if FTest then
+    begin
+      Writeln('тестовая выгрузка: ', CsvDir);
+      if not VerifyRoundtrip(gen.Geometry) then Result := 3;
+    end;
   end;
+  Writeln(Format('геометрия на R: запросов %d, из кеша %d',
+    [gen.Geometry.Calls, gen.Geometry.CacheHits]));
+  gen.Free;
 end;
 
 var

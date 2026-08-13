@@ -16,13 +16,13 @@ unit wwViewer;
 interface
 
 uses
-  SysUtils, Crt, wwCore, wwGrid, wwCsv
+  SysUtils, Crt, wwCore, wwGrid, wwSource
   {$IFDEF USE_BLT}, BearLibTerminal{$ENDIF};
 
 type
   TWwViewer = class
   protected
-    FReader: TWwCsvReader;
+    FSource: TWwMapSource;
     FGrid: TWwGrid;
     FLevel, FMaxLevel: Integer;
     FPlayerX, FPlayerY: Integer;
@@ -34,7 +34,7 @@ type
     procedure UseStairs;
     procedure HandleKey(AKey: Char);
   public
-    constructor Create(const ADir: string);
+    constructor Create(ASource: TWwMapSource);
     destructor Destroy; override;
     procedure Render; virtual; abstract;
     procedure Run; virtual; abstract;
@@ -59,11 +59,11 @@ type
 
 implementation
 
-constructor TWwViewer.Create(const ADir: string);
+constructor TWwViewer.Create(ASource: TWwMapSource);
 begin
   inherited Create;
-  FReader := TWwCsvReader.Create(ADir);
-  FMaxLevel := FReader.LevelCount;
+  FSource := ASource;
+  FMaxLevel := FSource.LevelCount;
   FViewW := 78;
   FViewH := 22;
   FGrid := nil;
@@ -73,7 +73,7 @@ end;
 destructor TWwViewer.Destroy;
 begin
   if FGrid <> nil then FGrid.Free;
-  FReader.Free;
+  FSource.Free;
   inherited Destroy;
 end;
 
@@ -100,20 +100,20 @@ var
   g: TWwGrid;
 begin
   if (ANumber < 1) or (ANumber > FMaxLevel) then Exit;
-  g := FReader.LoadGrid(ANumber);
+  g := FSource.LoadGrid(ANumber);
   if g = nil then Exit;
   if FGrid <> nil then FGrid.Free;
   FGrid := g;
   FLevel := ANumber;
   if AAtStairUp then
   begin
-    FPlayerX := FReader.StairUpX(ANumber);
-    FPlayerY := FReader.StairUpY(ANumber);
+    FPlayerX := FSource.StairUpX(ANumber);
+    FPlayerY := FSource.StairUpY(ANumber);
   end
   else
   begin
-    FPlayerX := FReader.StairDownX(ANumber);
-    FPlayerY := FReader.StairDownY(ANumber);
+    FPlayerX := FSource.StairDownX(ANumber);
+    FPlayerY := FSource.StairDownY(ANumber);
   end;
   FStatus := Format('этаж %d/%d, поле %dx%d', [FLevel, FMaxLevel, FGrid.W, FGrid.H]);
 end;

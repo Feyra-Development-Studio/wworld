@@ -67,37 +67,43 @@ jobs:
           | Rscript scripts/geometry.R 2>&1 | tee logs/05-geometry.log
 
     - name: Генерация 10 этажей
-      # генерации нужен Rscript: формы комнат и клетки коридоров считает
-      # scripts/geometry.R, поднимаемый как постоянный процесс
+      # Основное хранилище — out/dungeon.json с графом-инструкцией. Флаг
+      # --test добавляет человекочитаемую выгрузку out/csv и сверяет обратную
+      # сборку: карта восстанавливается из JSON и сравнивается с исходной.
+      # Генерации нужен Rscript: формы и клетки коридоров считает geometry.R.
       run: |
         set -euo pipefail
-        ./src/demo/demo --seed 20260813 --levels 10 --out csv 2>&1 | tee logs/06-generate.log
+        ./src/demo/demo --seed 20260813 --levels 10 --out out --test 2>&1 | tee logs/06-generate.log
 
     - name: Проверка инвариантов на R
       run: |
         set -euo pipefail
-        Rscript scripts/validate_dungeon.R --dir csv 2>&1 | tee logs/07-validate.log
+        Rscript scripts/validate_dungeon.R --dir out/csv 2>&1 | tee logs/07-validate.log
 
     - name: Проверка детерминизма
       run: |
         set -euo pipefail
         {
-          ./src/demo/demo --seed 20260813 --levels 10 --out csv_repeat
-          diff -r csv csv_repeat && echo "детерминизм подтверждён"
+          ./src/demo/demo --seed 20260813 --levels 10 --out out_repeat --test
+          diff -r out out_repeat && echo "детерминизм подтверждён"
         } 2>&1 | tee logs/08-determinism.log
-        rm -rf csv_repeat
+        rm -rf out_repeat
 
     - name: Дымовой тест ходилки
+      # оба источника: граф из JSON (карта строится заново) и выгрузка CSV
       run: |
         set -euo pipefail
-        ./src/demo/wwwalk --dir csv --script "ddsswwaa" 2>&1 | tee logs/09-walk.log
+        {
+          ./src/demo/wwwalk --json out/dungeon.json --script "ddsswwaa" | tail -2
+          ./src/demo/wwwalk --dir out/csv --script "ddsswwaa" | tail -2
+        } 2>&1 | tee logs/09-walk.log
 
-    - name: Карты (при успехе)
+    - name: Подземелье (при успехе)
       if: success()
       uses: actions/upload-artifact@v4
       with:
-        name: dungeon-csv
-        path: csv/
+        name: dungeon
+        path: out/
         if-no-files-found: error
 
     - name: Логи (при провале)
