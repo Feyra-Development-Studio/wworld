@@ -290,4 +290,8 @@ WwGeometryServer <- suppressMessages(setRefClass(
   )
 ))
 
-WwGeometryServer$new()$run()
+# Файл работает и как самостоятельный сервер, и как библиотека. Цикл чтения
+# stdin запускается только в первом случае: встроенному движку (Renjin на JVM)
+# канала stdin в привычном виде может не достаться, и он вызывает dispatch()
+# напрямую. Хост выставляет ww.embedded до загрузки файла.
+if (!exists("ww.embedded")) WwGeometryServer$new()$run()
