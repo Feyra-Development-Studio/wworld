@@ -18,3 +18,7 @@ logs/
 # сборка пакетов
 build/
 dist/
+
+# мусор компоновщика
+link*.res
+ppas.sh

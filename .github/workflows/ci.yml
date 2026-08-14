@@ -78,6 +78,17 @@ jobs:
         fpc -Mobjfpc -Sh -O2 -Fusrc/dungeon -FUsrc/dungeon \
             -osrc/demo/wwwalk src/demo/wwwalk.pas 2>&1 | tee logs/03-build-walker.log
 
+    - name: Поиск пути для ходьбы указанием
+      # Окно здесь не нужно: указание клетки приходит от мыши или касания, а
+      # сам поиск пути от способа указания не зависит. Поэтому проверка идёт
+      # на обычном бегунке, без BearLibTerminal и без эмулятора.
+      run: |
+        set -euo pipefail
+        mkdir -p build/tests
+        fpc -Mobjfpc -Sh -Fusrc/dungeon -FUbuild/tests \
+            -obuild/tests/testpath tests/path/testpath.pas 2>&1 | tee logs/03-path-build.log
+        ./build/tests/testpath 2>&1 | tee logs/03-path.log
+
     - name: Компиляция ветки BearLibTerminal
       # линковка требует libBearLibTerminal.so, поэтому только компиляция (-Cn)
       run: |

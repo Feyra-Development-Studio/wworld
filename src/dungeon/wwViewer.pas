@@ -16,7 +16,7 @@ unit wwViewer;
 interface
 
 uses
-  SysUtils, Crt, wwCore, wwGrid, wwSource
+  SysUtils, Crt, wwCore, wwGrid, wwPath, wwSource
   {$IFDEF USE_BLT}, BearLibTerminal{$ENDIF};
 
 type
@@ -33,6 +33,9 @@ type
     function TryMove(ADX, ADY: Integer): Boolean;
     procedure UseStairs;
     procedure HandleKey(AKey: Char);
+    { Ходьба указанием клетки: мышью на настольных платформах, касанием на
+      Android. Способ указания разный, обработка одна. }
+    function WalkTo(AX, AY: Integer): Boolean;
   public
     constructor Create(ASource: TWwMapSource);
     destructor Destroy; override;
@@ -51,6 +54,11 @@ type
   TWwBltViewer = class(TWwViewer)
   private
     function ColorFor(ACode: Byte): string;
+    { Смещение видимой области. Нужно и при отрисовке, и при разборе
+      указания: терминал сообщает клетку экрана, а игре нужна клетка карты. }
+    procedure ViewOrigin(out AOX, AOY: Integer);
+    { Щелчок мышью или касание — приходят одним и тем же событием. }
+    procedure HandlePointer;
   public
     procedure Render; override;
     procedure Run; override;
@@ -155,6 +163,44 @@ begin
     FStatus := 'здесь нет лестницы';
 end;
 
+function TWwViewer.WalkTo(AX, AY: Integer): Boolean;
+var
+  path: TWwPath;
+  reason: string;
+  i: Integer;
+begin
+  Result := False;
+
+  { Указали на клетку, где стоим: если под ногами лестница — это она и есть.
+    Так лестница работает и без клавиатуры, а без этого на Android до неё
+    было бы не добраться. }
+  if (AX = FPlayerX) and (AY = FPlayerY) then
+  begin
+    UseStairs;
+    Result := True;
+    Exit;
+  end;
+
+  if not WwFindPath(FGrid, FPlayerX, FPlayerY, AX, AY, path, reason) then
+  begin
+    { Причину показываем обязательно: молчание неотличимо от промаха мимо
+      клетки, а пальцем промахиваются постоянно. }
+    FStatus := reason;
+    Exit;
+  end;
+
+  for i := 0 to High(path) do
+    if not TryMove(path[i].DX, path[i].DY) then
+    begin
+      { Такого быть не должно: путь построен по тому же правилу перехода.
+        Если случилось — значит правила разошлись, и молчать об этом нельзя. }
+      FStatus := 'путь оборвался на полушаге';
+      Exit;
+    end;
+
+  Result := True;
+end;
+
 procedure TWwViewer.HandleKey(AKey: Char);
 var
   k: Char;
@@ -176,10 +222,44 @@ end;
 
 procedure TWwViewer.RunScript(const AMoves: string);
 var
-  i: Integer;
+  i, cx, cy: Integer;
+  num: string;
 begin
-  for i := 1 to Length(AMoves) do
-    HandleKey(AMoves[i]);
+  i := 1;
+  while i <= Length(AMoves) do
+  begin
+    { '@x,y' — указание клетки, тем же путём, каким его делает мышь и
+      касание. Нужно, чтобы ходьбу указанием можно было проверить в CI:
+      окна там нет, а поведение проверить надо. }
+    if AMoves[i] = '@' then
+    begin
+      Inc(i);
+      num := '';
+      while (i <= Length(AMoves)) and (AMoves[i] in ['0'..'9']) do
+      begin
+        num := num + AMoves[i];
+        Inc(i);
+      end;
+      cx := StrToIntDef(num, -1);
+      if (i <= Length(AMoves)) and (AMoves[i] = ',') then Inc(i);
+      num := '';
+      while (i <= Length(AMoves)) and (AMoves[i] in ['0'..'9']) do
+      begin
+        num := num + AMoves[i];
+        Inc(i);
+      end;
+      cy := StrToIntDef(num, -1);
+      if (cx >= 0) and (cy >= 0) then
+        WalkTo(cx, cy)
+      else
+        FStatus := 'в сценарии испорчено указание клетки';
+    end
+    else
+    begin
+      HandleKey(AMoves[i]);
+      Inc(i);
+    end;
+  end;
   Render;
 end;
 
@@ -259,19 +339,45 @@ begin
   end;
 end;
 
+procedure TWwBltViewer.ViewOrigin(out AOX, AOY: Integer);
+begin
+  AOX := FPlayerX - FViewW div 2;
+  AOY := FPlayerY - FViewH div 2;
+  if AOX < 0 then AOX := 0;
+  if AOY < 0 then AOY := 0;
+  if AOX > FGrid.W - FViewW then AOX := FGrid.W - FViewW;
+  if AOY > FGrid.H - FViewH then AOY := FGrid.H - FViewH;
+  if AOX < 0 then AOX := 0;
+  if AOY < 0 then AOY := 0;
+end;
+
+procedure TWwBltViewer.HandlePointer;
+var
+  ox, oy, cx, cy: Integer;
+begin
+  { terminal_state отдаёт клетку, а не пиксель, — пересчитывать нечего.
+    На Android касание придёт этим же событием (bearlibterminal#2), поэтому
+    отдельной ветки для него здесь не будет и быть не должно. }
+  ViewOrigin(ox, oy);
+  cx := terminal_state(TK_MOUSE_X);
+  cy := terminal_state(TK_MOUSE_Y);
+
+  { Ниже поля — строка состояния и подсказка, туда указывать бессмысленно. }
+  if (cy < 0) or (cy >= FViewH) or (cx < 0) or (cx >= FViewW) then
+  begin
+    FStatus := 'указано мимо карты';
+    Exit;
+  end;
+
+  WalkTo(ox + cx, oy + cy);
+end;
+
 procedure TWwBltViewer.Render;
 var
   x, y, ox, oy: Integer;
 begin
   terminal_clear;
-  ox := FPlayerX - FViewW div 2;
-  oy := FPlayerY - FViewH div 2;
-  if ox < 0 then ox := 0;
-  if oy < 0 then oy := 0;
-  if ox > FGrid.W - FViewW then ox := FGrid.W - FViewW;
-  if oy > FGrid.H - FViewH then oy := FGrid.H - FViewH;
-  if ox < 0 then ox := 0;
-  if oy < 0 then oy := 0;
+  ViewOrigin(ox, oy);
 
   for y := 0 to FViewH - 1 do
     for x := 0 to FViewW - 1 do
@@ -283,7 +389,8 @@ begin
   terminal_put(FPlayerX - ox, FPlayerY - oy, Ord('@'));
   terminal_color('white');
   terminal_print(0, FViewH + 1, AnsiString(FStatus));
-  terminal_print(0, FViewH + 2, AnsiString('WASD/QEZC — ходьба, > и < — лестницы, Esc — выход'));
+  terminal_print(0, FViewH + 2,
+    AnsiString('щелчок — идти в клетку, WASD/QEZC — по шагам, > и < — лестницы, Esc — выход'));
   terminal_refresh;
 end;
 
@@ -294,6 +401,9 @@ begin
   terminal_open;
   terminal_set(AnsiString(Format('window: size=%dx%d, title=''wworld''; font: default',
     [FViewW, FViewH + 3])));
+  { Без этого terminal_read не отдаёт щелчки вовсе: по умолчанию в очередь
+    попадают только клавиши. }
+  terminal_set(AnsiString('input: filter=[keyboard, mouse]'));
   repeat
     Render;
     key := terminal_read;
@@ -308,6 +418,7 @@ begin
       TK_C: HandleKey('c');
       TK_PERIOD: UseStairs;
       TK_COMMA: UseStairs;
+      TK_MOUSE_LEFT: HandlePointer;
     end;
   until (key = TK_ESCAPE) or (key = TK_CLOSE);
   terminal_close;
