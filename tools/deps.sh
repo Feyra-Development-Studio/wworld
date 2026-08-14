@@ -4,22 +4,24 @@
 #
 # Раньше все задания забирали подмодули через submodules: recursive, то есть
 # каждое качало всё. Пока подмодуль был один и весил четыре килобайта, это
-# ничего не стоило. С появлением Renjin (57 МБ) это стало заметно, а главное —
-# бессмысленно: сборке под Linux интерпретатор на JVM не нужен вовсе, а сборке
-# под Android не нужен BearLibTerminal.
+# ничего не стоило. С появлением Renjin (57 МБ) это стало заметно: сборке под
+# Linux интерпретатор на JVM не нужен вовсе.
 #
-# Набор зависит от того, ЧТО собираем, а не от того, ГДЕ собираем: движок
-# геометрии у нас разный для разных поставок (#4, #5, #6). На Linux это
-# Rscript, на Android — Renjin внутри приложения, а на Windows выбор делает
-# установщик по режиму установки, и ветки gnu и renjin существуют затем, чтобы
-# этот выбор был обоснован замером, а не вкусом. Поэтому пресеты названы по
-# поставке, а не по системе.
+# BearLibTerminal берётся ВСЕГДА. Проект на нём основан, это не одна из
+# зависимостей, а то, во что игра выводится, — на любой платформе, включая
+# Android. Пресета без него не существует и не должно появиться.
 #
-#   tools/deps.sh core             ходилка и генератор на Linux: BearLibTerminal
-#   tools/deps.sh android          приложение на Renjin: renjin
-#   tools/deps.sh engine-check     сверка движков: renjin
-#   tools/deps.sh windows-gnu      ветка gnu: BearLibTerminal, R ставит установщик
-#   tools/deps.sh windows-renjin   ветка renjin: BearLibTerminal и renjin
+# Меняется только движок геометрии: на Linux это Rscript из системы, на
+# Android — Renjin внутри приложения, а на Windows выбор делает установщик по
+# режиму установки, и ветки gnu и renjin существуют затем, чтобы этот выбор
+# был обоснован замером (#4, #5, #6). Поэтому пресеты названы по поставке, а
+# не по системе.
+#
+#   tools/deps.sh core             Linux, движок Rscript: bearlibterminal
+#   tools/deps.sh android          приложение: bearlibterminal и renjin
+#   tools/deps.sh engine-check     сверка движков: bearlibterminal и renjin
+#   tools/deps.sh windows-gnu      ветка gnu: bearlibterminal, R ставит установщик
+#   tools/deps.sh windows-renjin   ветка renjin: bearlibterminal и renjin
 #   tools/deps.sh all              всё сразу
 #
 # Можно назвать подмодули и поимённо:
@@ -29,22 +31,21 @@
 set -euo pipefail
 
 usage() {
-    sed -n '3,27p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '3,30p' "$0" | sed 's/^# \{0,1\}//'
     exit "${1:-0}"
 }
 
 resolve() {
     case "$1" in
         core|linux)      echo "bearlibterminal" ;;
-        android)         echo "renjin" ;;
-        engine-check)    echo "renjin" ;;
+        android)         echo "bearlibterminal renjin" ;;
+        engine-check)    echo "bearlibterminal renjin" ;;
         windows-gnu)     echo "bearlibterminal" ;;
         windows-renjin)  echo "bearlibterminal renjin" ;;
         all)             echo "bearlibterminal renjin" ;;
-        none)            echo "" ;;
         *)
             echo "неизвестная поставка: $1" >&2
-            echo "известны: core, android, engine-check, windows-gnu, windows-renjin, all, none" >&2
+            echo "известны: core, android, engine-check, windows-gnu, windows-renjin, all" >&2
             exit 2
             ;;
     esac
