@@ -11,6 +11,8 @@ src/demo/wwwalk
 # при успешном прогоне уходит артефактом dungeon
 out/
 out_repeat/
+out*/
+csv/
 logs/
 
 # сборка пакетов
