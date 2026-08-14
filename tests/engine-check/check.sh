@@ -6,7 +6,7 @@
 # движком и сравниваются целиком: совпадение ответов ещё не значит совпадения
 # карт при одном seed.
 #
-#   tools/renjin/check.sh [каталог сборки] [бинарник demo] [seed]
+#   tests/engine-check/check.sh [каталог сборки] [бинарник demo] [seed]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -14,22 +14,15 @@ cd "$ROOT"
 WORK="${1:-build/renjin}"
 DEMO="${2:-./src/demo/demo}"
 SEED="${3:-20260813}"
-NEXUS="https://nexus.bedatadriven.com/content/groups/public"
-ART="org/renjin/renjin-script-engine"
-
 mkdir -p "$WORK"
 
-echo "== версия Renjin =="
-curl -fsS "$NEXUS/$ART/maven-metadata.xml" -o "$WORK/metadata.xml"
-VERSION="$(grep -oE '<release>[^<]+' "$WORK/metadata.xml" | head -1 | cut -d'>' -f2 || true)"
-[ -n "$VERSION" ] || VERSION="$(grep -oE '<version>[^<]+' "$WORK/metadata.xml" | tail -1 | cut -d'>' -f2)"
-echo "$VERSION"
-
-JAR="$WORK/renjin-script-engine-$VERSION-jar-with-dependencies.jar"
-[ -f "$JAR" ] || curl -fsS "$NEXUS/$ART/$VERSION/renjin-script-engine-$VERSION-jar-with-dependencies.jar" -o "$JAR"
+echo "== движок Renjin =="
+# Откуда берётся jar, решает tools/renjin-jar.sh — одно место на все поставки.
+JAR="$(tools/renjin-jar.sh "$WORK")"
 ls -sh "$JAR"
 
 echo "== библиотека org.json =="
+# На Android org.json входит в саму систему, здесь нужна отдельная.
 JSON="$WORK/json.jar"
 [ -f "$JSON" ] || curl -fsS "https://repo1.maven.org/maven2/org/json/json/20240303/json-20240303.jar" -o "$JSON"
 
@@ -40,8 +33,8 @@ javac -encoding UTF-8 -cp "$JAR:$JSON" -d "$WORK/classes" java/src/ru/wworld/*.j
 ENGINE="java -Dstdout.encoding=UTF-8 -cp $JAR:$JSON:$WORK/classes ru.wworld.RenjinHost"
 
 echo "== сверка ответов на наборе команд =="
-Rscript scripts/geometry.R < tools/renjin/commands.txt > "$WORK/gnu-r.txt"
-$ENGINE scripts/geometry.R < tools/renjin/commands.txt > "$WORK/renjin.txt" 2> "$WORK/renjin.err" || true
+Rscript scripts/geometry.R < tests/engine-check/commands.txt > "$WORK/gnu-r.txt"
+$ENGINE scripts/geometry.R < tests/engine-check/commands.txt > "$WORK/renjin.txt" 2> "$WORK/renjin.err" || true
 if ! diff -u "$WORK/gnu-r.txt" "$WORK/renjin.txt" > "$WORK/answers.diff"; then
   echo "РАСХОЖДЕНИЕ в ответах:"
   head -40 "$WORK/answers.diff"

@@ -1,3 +1,7 @@
 [submodule "third_party/bearlibterminal"]
 	path = third_party/bearlibterminal
 	url = https://github.com/Risto90/bearlibterminal.git
+[submodule "third_party/renjin"]
+	path = third_party/renjin
+	url = https://github.com/Risto90/renjin.git
+	branch = dev

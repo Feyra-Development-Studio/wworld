@@ -35,8 +35,12 @@ jobs:
         fi
 
     - uses: actions/checkout@v4
-      with:
-        submodules: recursive
+
+    - name: Подмодули
+      # Релиз собирает пакеты Linux и Windows; сейчас обеим поставкам нужен
+      # только BearLibTerminal. Когда появится ветка renjin (#4), сюда придёт
+      # windows-renjin.
+      run: tools/deps.sh core
 
     # Версия 0.yy.m.n: yy — год, m — месяц без ведущего нуля, n растёт внутри
     # месяца и только после выкладки, а с началом месяца снова становится 1.

@@ -1,6 +1,28 @@
 name: build, test, release
 
-on: [push, pull_request]
+on:
+  push:
+    # Тесты не должны срываться на правке текста: README, документация и
+    # лицензия к сборке отношения не имеют, а прогон занимает минуты и шлёт
+    # письмо о падении там, где падать нечему.
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+  # Ручной запуск: пока правки не дописаны, гонять тесты незачем, а когда
+  # дописаны — запуск делается осознанно, а не каждым коммитом подряд.
+  workflow_dispatch:
+
+# Новый прогон отменяет предыдущий на той же ветке: если коммиты идут подряд,
+# смысл имеет только последний.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -19,8 +41,9 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-      with:
-        submodules: recursive
+
+    - name: Подмодули
+      run: tools/deps.sh core
 
     - name: Окружение
       run: |
@@ -155,7 +178,7 @@ jobs:
     - name: Сверка движков
       run: |
         set -euo pipefail
-        tools/renjin/check.sh build/renjin ./src/demo/demo "$SEED" 2>&1 | tee logs/30-renjin.log
+        tests/engine-check/check.sh build/renjin ./src/demo/demo "$SEED" 2>&1 | tee logs/30-renjin.log
 
     - name: Отчёт
       if: always()
