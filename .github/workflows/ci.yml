@@ -420,6 +420,9 @@ jobs:
           api-level: 28
           arch: x86_64
           target: default
+          # Профиль по умолчанию даёт 320x560 — на таком экране сетка выходит
+          # игрушечной, и проверять на нём нечего. Берём обычный телефон.
+          profile: pixel_2
           disable-animations: true
           script: |
             adb install -r $(find android -name '*.apk' | head -1)
