@@ -19,6 +19,7 @@
 #include <jni.h>
 
 #include <atomic>
+#include <string>
 #include <chrono>
 #include <stdexcept>
 #include <system_error>
@@ -35,6 +36,8 @@ namespace
 	std::atomic<int> g_touch_slop{0};
 	std::atomic<bool> g_threaded{false};
 	bool g_grid_fitted = false;
+	std::string g_last_event = "ввода ещё не было";
+	int g_moves = 0;
 
 	std::atomic<bool> g_opened{false};
 
@@ -113,6 +116,42 @@ namespace
 			}
 		}
 
+		// Разбор событий. Пока игры нет, событие просто показывается на
+		// экране и уходит в журнал — по нему проверяется ввод на устройстве.
+		while (terminal_has_input())
+		{
+			int event = terminal_read();
+			char line[160];
+
+			if (event == TK_MOUSE_LEFT)
+			{
+				snprintf(line, sizeof(line), "нажатие: клетка %dx%d, подряд %d",
+					terminal_state(TK_MOUSE_X), terminal_state(TK_MOUSE_Y),
+					terminal_state(TK_MOUSE_CLICKS));
+				g_last_event = line;
+				terminal_log(TK_LOG_INFO, line);
+			}
+			else if (event == (TK_MOUSE_LEFT | TK_KEY_RELEASED))
+			{
+				terminal_log(TK_LOG_INFO, "отпускание");
+			}
+			else if (event == TK_MOUSE_MOVE)
+			{
+				g_moves += 1;
+				snprintf(line, sizeof(line), "движение %d: клетка %dx%d",
+					g_moves, terminal_state(TK_MOUSE_X), terminal_state(TK_MOUSE_Y));
+				g_last_event = line;
+				terminal_log(TK_LOG_INFO, line);
+			}
+			else if (event > 0 && event != TK_CLOSE)
+			{
+				snprintf(line, sizeof(line), "клавиша: код %d, знак %d",
+					event & 0xFF, terminal_state(TK_WCHAR));
+				g_last_event = line;
+				terminal_log(TK_LOG_INFO, line);
+			}
+		}
+
 		{
 			terminal_clear();
 			terminal_color(color_from_name("white"));
@@ -121,6 +160,8 @@ namespace
 			terminal_print(1, 3, "########  ......  @");
 			terminal_color(color_from_name("cyan"));
 			terminal_print(1, 5, "кириллица: этаж 1/10");
+			terminal_color(color_from_name("yellow"));
+			terminal_print(1, 7, g_last_event.c_str());
 			terminal_refresh();
 		}
 	}

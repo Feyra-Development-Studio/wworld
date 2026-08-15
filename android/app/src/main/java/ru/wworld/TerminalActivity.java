@@ -9,6 +9,7 @@ import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
+import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.WindowManager;
 
@@ -65,6 +66,22 @@ public class TerminalActivity extends Activity implements SurfaceHolder.Callback
         surfaceView.getHolder().addCallback(this);
         surfaceView.setFocusable(true);
         surfaceView.setFocusableInTouchMode(true);
+
+        // Касания снимаются с самой поверхности, а не с деятельности: у
+        // деятельности координаты считаются от окна, и любая полоса сверху
+        // сдвигала бы клетку по вертикали — игрок тыкал бы в одно, а попадал
+        // в другое.
+        surfaceView.setOnTouchListener(new View.OnTouchListener() {
+            @Override public boolean onTouch(View view, MotionEvent event) {
+                return handlePointer(event);
+            }
+        });
+        surfaceView.setOnGenericMotionListener(new View.OnGenericMotionListener() {
+            @Override public boolean onGenericMotion(View view, MotionEvent event) {
+                return handlePointer(event);
+            }
+        });
+
         setContentView(surfaceView);
 
         // Порог, дальше которого движение пальца перестаёт быть щелчком.
@@ -103,8 +120,7 @@ public class TerminalActivity extends Activity implements SurfaceHolder.Callback
         nativeSurfaceChanged(null);
     }
 
-    @Override
-    public boolean onTouchEvent(MotionEvent event) {
+    private boolean handlePointer(MotionEvent event) {
         // Палец и мышь различаются только здесь и только ради того, когда
         // посылать нажатие: у мыши сразу, у пальца при отрыве. Наружу события
         // одни и те же.
@@ -115,6 +131,8 @@ public class TerminalActivity extends Activity implements SurfaceHolder.Callback
             case MotionEvent.ACTION_DOWN: action = 0; break;
             case MotionEvent.ACTION_UP: action = 1; break;
             case MotionEvent.ACTION_MOVE: action = 2; break;
+            // Движение мыши без нажатой кнопки — тоже движение указателя.
+            case MotionEvent.ACTION_HOVER_MOVE: action = 2; break;
             case MotionEvent.ACTION_CANCEL:
                 // Жест отменила система — например, вытянули шторку.
                 // Для терминала это отпускание вне поля: щелчка быть не должно.
@@ -126,17 +144,6 @@ public class TerminalActivity extends Activity implements SurfaceHolder.Callback
 
         nativePointer(action, (int) event.getX(), (int) event.getY(), isTouch);
         return true;
-    }
-
-    @Override
-    public boolean onGenericMotionEvent(MotionEvent event) {
-        // Движение мыши без нажатой кнопки приходит сюда, а не в onTouchEvent.
-        if ((event.getSource() & InputDevice.SOURCE_MOUSE) == InputDevice.SOURCE_MOUSE
-                && event.getActionMasked() == MotionEvent.ACTION_HOVER_MOVE) {
-            nativePointer(2, (int) event.getX(), (int) event.getY(), 0);
-            return true;
-        }
-        return super.onGenericMotionEvent(event);
     }
 
     @Override
