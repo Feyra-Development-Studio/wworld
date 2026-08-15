@@ -116,8 +116,29 @@ namespace
 			}
 		}
 
-		// Разбор событий. Пока игры нет, событие просто показывается на
-		// экране и уходит в журнал — по нему проверяется ввод на устройстве.
+		{
+			terminal_clear();
+			terminal_color(color_from_name("white"));
+			terminal_print(1, 1, "BearLibTerminal на Android");
+			terminal_color(color_from_name("orange"));
+			terminal_print(1, 3, "########  ......  @");
+			terminal_color(color_from_name("cyan"));
+			terminal_print(1, 5, "кириллица: этаж 1/10");
+			terminal_color(color_from_name("yellow"));
+			terminal_print(1, 7, g_last_event.c_str());
+			terminal_refresh();
+		}
+
+		/* Разбор событий — только после первой отрисовки, и это не мелочь.
+		
+		   Пока терминал не показан, HasInput отвечает «есть ввод» независимо
+		   от очереди — так библиотека будит приложение, — а следующий за ним
+		   terminal_read виснет, ожидая события, которого нет. Приложение
+		   зависало насмерть до первого кадра: на снимке экрана оставалась
+		   чернота, в журнале — тишина после создания поверхности.
+		
+		   Показанным терминал становится внутри Refresh, поэтому порядок
+		   здесь обязателен: сначала кадр, потом события. */
 		while (terminal_has_input())
 		{
 			int event = terminal_read();
@@ -152,18 +173,6 @@ namespace
 			}
 		}
 
-		{
-			terminal_clear();
-			terminal_color(color_from_name("white"));
-			terminal_print(1, 1, "BearLibTerminal на Android");
-			terminal_color(color_from_name("orange"));
-			terminal_print(1, 3, "########  ......  @");
-			terminal_color(color_from_name("cyan"));
-			terminal_print(1, 5, "кириллица: этаж 1/10");
-			terminal_color(color_from_name("yellow"));
-			terminal_print(1, 7, g_last_event.c_str());
-			terminal_refresh();
-		}
 	}
 
 	void TerminalThread()
