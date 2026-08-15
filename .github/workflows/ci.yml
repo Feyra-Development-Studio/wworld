@@ -1,23 +1,21 @@
 name: build, test, release
 
 on:
-  push:
-    # Тесты не должны срываться на правке текста: README, документация и
-    # лицензия к сборке отношения не имеют, а прогон занимает минуты и шлёт
-    # письмо о падении там, где падать нечему.
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'LICENSE'
-  pull_request:
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'LICENSE'
-  # Ручной запуск: пока правки не дописаны, гонять тесты незачем, а когда
-  # дописаны — запуск делается осознанно, а не каждым коммитом подряд.
+  # Только по требованию.
+  #
+  # Прогон по каждому push давал ровно то, чего быть не должно: правки идут
+  # подряд, каждый новый прогон отменяет предыдущий, и в списке коммитов
+  # остаётся вереница красных отметок «cancelled» — при том, что ничего не
+  # ломалось. Проверка, которая краснеет от самого факта работы, не сообщает
+  # ничего и приучает не смотреть на неё вовсе.
+  #
+  # Поэтому запуск делается осознанно, когда правки дописаны.
   workflow_dispatch:
     inputs:
+      run_tests:
+        description: 'Тесты ядра, пакеты Linux и Windows'
+        type: boolean
+        default: true
       run_android:
         description: 'Собрать APK и прогнать на эмуляторе'
         type: boolean
@@ -39,6 +37,7 @@ jobs:
 
   core:
     name: тесты ядра
+    if: inputs.run_tests
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -162,6 +161,7 @@ jobs:
   # Сверяются и ответы на наборе команд, и подземелья целиком при одном seed.
   renjin:
     name: Renjin как движок геометрии
+    if: inputs.run_tests
     needs: core
     continue-on-error: true
     runs-on: ubuntu-latest
@@ -212,6 +212,7 @@ jobs:
 
   linux-packages:
     name: пакеты Linux (deb, rpm)
+    if: inputs.run_tests
     needs: core
     runs-on: ubuntu-latest
     defaults:
@@ -297,6 +298,7 @@ jobs:
 
   windows-build:
     name: сборка Windows (кросс)
+    if: inputs.run_tests
     needs: core
     runs-on: ubuntu-latest
     defaults:
