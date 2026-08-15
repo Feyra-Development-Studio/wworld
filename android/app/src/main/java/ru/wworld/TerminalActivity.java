@@ -2,6 +2,8 @@ package ru.wworld;
 
 import android.app.Activity;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
@@ -28,12 +30,28 @@ public class TerminalActivity extends Activity implements SurfaceHolder.Callback
     }
 
     private native void nativeStart(Object assetManager, int touchSlop);
+    private native boolean nativeIsThreaded();
+    private native void nativeStep();
     private native void nativeStop();
     private native void nativeSurfaceChanged(Object surface);
     private native void nativePointer(int action, int x, int y, int isTouch);
     private native void nativeKey(int keyCode, int pressed, int unicode);
 
     private SurfaceView surfaceView;
+
+    /* Запасной ход на случай, когда своего потока терминалу не досталось.
+     *
+     * Тогда цикл гонит сама система: сюда приходит по кадру каждые полсотни
+     * миллисекунд. Это медленнее и грубее, но игра остаётся играбельной, а
+     * приложение — живым: занимать поток деятельности бесконечным циклом
+     * нельзя, система убьёт его за неотзывчивость. */
+    private Handler stepHandler;
+    private final Runnable stepRunnable = new Runnable() {
+        @Override public void run() {
+            nativeStep();
+            stepHandler.postDelayed(this, 50);
+        }
+    };
 
     @Override
     protected void onCreate(Bundle state) {
@@ -53,10 +71,17 @@ public class TerminalActivity extends Activity implements SurfaceHolder.Callback
         // Библиотека о плотности точек экрана не знает, а здесь она известна.
         int touchSlop = ViewConfiguration.get(this).getScaledTouchSlop();
         nativeStart(getAssets(), touchSlop);
+
+        if (!nativeIsThreaded()) {
+            stepHandler = new Handler(Looper.getMainLooper());
+            stepHandler.post(stepRunnable);
+        }
     }
 
     @Override
     protected void onDestroy() {
+        if (stepHandler != null)
+            stepHandler.removeCallbacks(stepRunnable);
         nativeStop();
         super.onDestroy();
     }
