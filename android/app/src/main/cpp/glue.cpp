@@ -34,6 +34,7 @@ namespace
 	ANativeWindow* g_current_surface = nullptr;
 	std::atomic<int> g_touch_slop{0};
 	std::atomic<bool> g_threaded{false};
+	bool g_grid_fitted = false;
 
 	std::atomic<bool> g_opened{false};
 
@@ -63,25 +64,6 @@ namespace
 		if (int slop = g_touch_slop.load())
 			terminal_android_touch_slop(slop);
 
-		// Размер сетки считается от экрана: на Android окно всегда равно
-		// экрану, и просить окно определённого размера бессмысленно.
-		int cell_w = terminal_state(TK_CELL_WIDTH);
-		int cell_h = terminal_state(TK_CELL_HEIGHT);
-		int screen_w = terminal_state(TK_SCREEN_WIDTH);
-		int screen_h = terminal_state(TK_SCREEN_HEIGHT);
-
-		char setting[128];
-		if (cell_w > 0 && cell_h > 0 && screen_w > 0 && screen_h > 0)
-		{
-			snprintf(setting, sizeof(setting), "window: size=%dx%d",
-				screen_w / cell_w, screen_h / cell_h);
-			terminal_set(setting);
-		}
-
-		LOGI("экран %dx%d, ячейка %dx%d, сетка %dx%d",
-			screen_w, screen_h, cell_w, cell_h,
-			terminal_state(TK_WIDTH), terminal_state(TK_HEIGHT));
-
 		return true;
 	}
 
@@ -96,6 +78,35 @@ namespace
 		{
 			terminal_android_surface(surface);
 			g_current_surface = surface;
+			g_grid_fitted = false;
+		}
+
+		/* Сетка считается от экрана и только после того, как поверхность
+		   появилась.
+		
+		   При открытии терминала её ещё нет: eglQuerySurface спрашивать не у
+		   чего, и размер экрана выходит нулевым — что и случилось на первом
+		   прогоне, в журнале осталось «экран 0x0». Сетка тогда молча остаётся
+		   стандартной 80x25, то есть не по экрану. */
+		if (!g_grid_fitted && surface != nullptr)
+		{
+			int cell_w = terminal_state(TK_CELL_WIDTH);
+			int cell_h = terminal_state(TK_CELL_HEIGHT);
+			int screen_w = terminal_state(TK_SCREEN_WIDTH);
+			int screen_h = terminal_state(TK_SCREEN_HEIGHT);
+
+			if (cell_w > 0 && cell_h > 0 && screen_w > 0 && screen_h > 0)
+			{
+				char setting[128];
+				snprintf(setting, sizeof(setting), "window: size=%dx%d",
+					screen_w / cell_w, screen_h / cell_h);
+				terminal_set(setting);
+				g_grid_fitted = true;
+
+				LOGI("экран %dx%d, ячейка %dx%d, сетка %dx%d",
+					screen_w, screen_h, cell_w, cell_h,
+					terminal_state(TK_WIDTH), terminal_state(TK_HEIGHT));
+			}
 		}
 
 		{

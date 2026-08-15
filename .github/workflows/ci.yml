@@ -427,11 +427,15 @@ jobs:
             adb logcat -d > logcat.txt
             adb exec-out screencap -p > screen.png
             echo "== что сказал терминал =="
-            grep -iE "wworld|BearLibTerminal|EGL|OpenGL" logcat.txt | head -40
-            # Падение приложения — провал, даже если картинка вышла.
-            if grep -q "FATAL EXCEPTION\|beginning of crash" logcat.txt; then
-              echo "приложение упало"; exit 1
-            fi
+            grep -iE "wworld|BearLibTerminal|EGL_emulation.*rcv" logcat.txt | head -40
+            # Каждая строка уходит в sh -c отдельно, поэтому многострочный if
+            # тут не работает: первый прогон упал именно на этом, а не на
+            # приложении. Всё, что проверяется, пишется в одну строку.
+            grep -q "FATAL EXCEPTION\|beginning of crash" logcat.txt && { echo "приложение упало"; exit 1; } || true
+            grep -q "терминал открыт на устройстве" logcat.txt || { echo "терминал не открылся"; exit 1; }
+            grep -qE "eglCreateContext.*maj 3" logcat.txt || { echo "контекст GLES3 не создан"; exit 1; }
+            grep -oE "экран [0-9]+x[0-9]+, ячейка [0-9]+x[0-9]+, сетка [0-9]+x[0-9]+" logcat.txt | tail -1
+            grep -qE "экран [1-9][0-9]*x[1-9][0-9]*" logcat.txt || { echo "размер экрана не определился"; exit 1; }
 
       - uses: actions/upload-artifact@v4
         if: always()
