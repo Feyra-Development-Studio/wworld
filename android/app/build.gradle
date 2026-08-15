@@ -1,0 +1,40 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'ru.wworld'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "ru.wworld"
+        // minSdk 28 задан не отсюда: планку подняли dex-требования Renjin,
+        // которому нужен API 28, чтобы переводиться без предупреждений.
+        minSdk 28
+        targetSdk 34
+        versionCode 1
+        versionName "0.1"
+
+        ndk { abiFilters 'arm64-v8a' }
+
+        externalNativeBuild {
+            cmake {
+                arguments '-DANDROID_STL=c++_shared'
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path 'src/main/cpp/CMakeLists.txt'
+            version '3.22.1'
+        }
+    }
+
+    buildTypes {
+        release { minifyEnabled false }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
