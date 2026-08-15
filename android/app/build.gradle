@@ -13,7 +13,12 @@ android {
         versionCode 1
         versionName "0.1"
 
-        ndk { abiFilters 'arm64-v8a' }
+        // arm64-v8a — то, на чём играют; x86_64 — то, на чём проверяют:
+        // эмулятор в CI работает на x86_64, и APK только под arm туда просто
+        // не ставится (INSTALL_FAILED_NO_MATCHING_ABIS). Собирать под обе
+        // дешевле, чем гонять эмулятор под arm без ускорения — он на порядок
+        // медленнее и на бегунке не укладывается в разумное время.
+        ndk { abiFilters 'arm64-v8a', 'x86_64' }
 
         externalNativeBuild {
             cmake {
