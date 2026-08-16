@@ -27,6 +27,17 @@
 
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "wworld", __VA_ARGS__)
 
+// Игра живёт в своей библиотеке на Pascal: на Android приложение не запускает
+// исполняемых файлов, поэтому та же ходилка, что на настольных платформах
+// собирается программой, здесь собирается библиотекой с точками входа.
+extern "C"
+{
+	int wworld_open(const char* dir);
+	int wworld_frame(void);
+	void wworld_close(void);
+	const char* wworld_last_error(void);
+}
+
 namespace
 {
 	std::thread g_thread;
@@ -36,8 +47,9 @@ namespace
 	std::atomic<int> g_touch_slop{0};
 	std::atomic<bool> g_threaded{false};
 	bool g_grid_fitted = false;
-	std::string g_last_event = "ввода ещё не было";
-	int g_moves = 0;
+	bool g_game_open = false;
+	bool g_game_failed = false;
+	std::string g_data_dir;
 
 	std::atomic<bool> g_opened{false};
 
@@ -82,6 +94,11 @@ namespace
 	// Один шаг: подхватить поверхность, если она сменилась, и нарисовать кадр.
 	void TerminalStep()
 	{
+		// Если карта не открылась, дальше делать нечего: сообщение уже в
+		// журнале, а мигать пустым экраном по двадцать раз в секунду незачем.
+		if (g_game_failed)
+			return;
+
 		if (!g_opened && !TerminalOpen())
 			return;
 
@@ -121,64 +138,30 @@ namespace
 			}
 		}
 
+		/* Игра. Открывается один раз, когда терминал уже готов.
+
+		   Разбирать ввод здесь больше нечего: этим занимается сама игра, в
+		   wworld_frame. Показная сцена своё отслужила — она доказывала, что
+		   порт живой, а теперь на её месте настоящая карта. */
+		if (!g_game_open)
 		{
-			terminal_clear();
-			terminal_color(color_from_name("white"));
-			terminal_print(1, 1, "BearLibTerminal на Android");
-			terminal_color(color_from_name("orange"));
-			terminal_print(1, 3, "########  ......  @");
-			terminal_color(color_from_name("cyan"));
-			terminal_print(1, 5, "кириллица: этаж 1/10");
-			terminal_color(color_from_name("yellow"));
-			terminal_print(1, 7, g_last_event.c_str());
-			terminal_refresh();
+			if (!wworld_open(g_data_dir.c_str()))
+			{
+				LOGI("подземелье не открылось: %s", wworld_last_error());
+				terminal_log(TK_LOG_ERROR, "подземелье не открылось");
+				// Второй раз не пробуем: если карты нет, она не появится.
+				g_game_failed = true;
+				return;
+			}
+			g_game_open = true;
+			terminal_log(TK_LOG_INFO, "подземелье открыто");
 		}
 
-		/* Разбор событий — только после первой отрисовки, и это не мелочь.
-		
-		   Пока терминал не показан, HasInput отвечает «есть ввод» независимо
-		   от очереди — так библиотека будит приложение, — а следующий за ним
-		   terminal_read виснет, ожидая события, которого нет. Приложение
-		   зависало насмерть до первого кадра: на снимке экрана оставалась
-		   чернота, в журнале — тишина после создания поверхности.
-		
-		   Показанным терминал становится внутри Refresh, поэтому порядок
-		   здесь обязателен: сначала кадр, потом события. */
-		while (terminal_has_input())
+		if (!wworld_frame())
 		{
-			int event = terminal_read();
-			char line[160];
-
-			if (event == TK_MOUSE_LEFT)
-			{
-				snprintf(line, sizeof(line), "нажатие: клетка %dx%d, подряд %d",
-					terminal_state(TK_MOUSE_X), terminal_state(TK_MOUSE_Y),
-					terminal_state(TK_MOUSE_CLICKS));
-				g_last_event = line;
-				terminal_log(TK_LOG_INFO, line);
-			}
-			else if (event == (TK_MOUSE_LEFT | TK_KEY_RELEASED))
-			{
-				terminal_log(TK_LOG_INFO, "отпускание");
-			}
-			else if (event == TK_MOUSE_MOVE)
-			{
-				g_moves += 1;
-				snprintf(line, sizeof(line), "движение %d: клетка %dx%d",
-					g_moves, terminal_state(TK_MOUSE_X), terminal_state(TK_MOUSE_Y));
-				g_last_event = line;
-				terminal_log(TK_LOG_INFO, line);
-			}
-			else if (event > 0 && event != TK_CLOSE)
-			{
-				snprintf(line, sizeof(line), "клавиша: код %d, знак %d",
-					event & 0xFF, terminal_state(TK_WCHAR));
-				g_last_event = line;
-				terminal_log(TK_LOG_INFO, line);
-			}
+			terminal_log(TK_LOG_INFO, "игра просит выхода");
+			g_running = false;
 		}
-
-	}
 
 	void TerminalThread()
 	{
@@ -201,10 +184,18 @@ extern "C"
 {
 
 JNIEXPORT void JNICALL
-Java_ru_wworld_TerminalActivity_nativeStart(JNIEnv* env, jobject, jobject asset_manager, jint touch_slop)
+Java_ru_wworld_TerminalActivity_nativeStart(JNIEnv* env, jobject, jobject asset_manager,
+	jint touch_slop, jstring data_dir)
 {
 	if (g_running.exchange(true))
 		return;
+
+	if (const char* dir = env->GetStringUTFChars(data_dir, nullptr))
+	{
+		g_data_dir = dir;
+		env->ReleaseStringUTFChars(data_dir, dir);
+		LOGI("карта ожидается в %s", g_data_dir.c_str());
+	}
 
 	terminal_set_asset_manager(AAssetManager_fromJava(env, asset_manager));
 	g_touch_slop.store(touch_slop);
@@ -259,7 +250,14 @@ Java_ru_wworld_TerminalActivity_nativeStop(JNIEnv*, jobject)
 	g_running = false;
 	if (g_thread.joinable())
 		g_thread.join();
-	else if (g_opened)
+
+	if (g_game_open)
+	{
+		wworld_close();
+		g_game_open = false;
+	}
+
+	if (!g_thread.joinable() && g_opened)
 		terminal_close();   // цикл гнала система, закрывать некому
 
 	if (ANativeWindow* surface = g_pending_surface.exchange(nullptr))

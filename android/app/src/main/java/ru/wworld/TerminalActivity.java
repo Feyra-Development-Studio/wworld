@@ -1,6 +1,14 @@
 package ru.wworld;
 
 import android.app.Activity;
+import android.util.Log;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import android.content.res.AssetManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -30,7 +38,7 @@ public class TerminalActivity extends Activity implements SurfaceHolder.Callback
         System.loadLibrary("wworld");
     }
 
-    private native void nativeStart(Object assetManager, int touchSlop);
+    private native void nativeStart(Object assetManager, int touchSlop, String dataDir);
     private native boolean nativeIsThreaded();
     private native void nativeStep();
     private native void nativeStop();
@@ -87,7 +95,7 @@ public class TerminalActivity extends Activity implements SurfaceHolder.Callback
         // Порог, дальше которого движение пальца перестаёт быть щелчком.
         // Библиотека о плотности точек экрана не знает, а здесь она известна.
         int touchSlop = ViewConfiguration.get(this).getScaledTouchSlop();
-        nativeStart(getAssets(), touchSlop);
+        nativeStart(getAssets(), touchSlop, unpackData());
 
         if (!nativeIsThreaded()) {
             stepHandler = new Handler(Looper.getMainLooper());
@@ -101,6 +109,48 @@ public class TerminalActivity extends Activity implements SurfaceHolder.Callback
             stepHandler.removeCallbacks(stepRunnable);
         nativeStop();
         super.onDestroy();
+    }
+
+    /**
+     * Раскладывает карту из ресурсов APK в хранилище приложения.
+     *
+     * Ресурсы в APK — не файлы: у них нет пути, и обычным файловым чтением их
+     * не открыть. Библиотека умеет читать их через AAssetManager, но игра на
+     * Pascal читает файлы, и переучивать её ради одной платформы значило бы
+     * тащить Android внутрь общего кода.
+     *
+     * Поэтому раскладываем один раз при запуске. Возвращается путь, по
+     * которому игра найдёт выгрузку.
+     */
+    private String unpackData() {
+        File target = new File(getFilesDir(), "csv");
+        AssetManager assets = getAssets();
+        try {
+            String[] names = assets.list("csv");
+            if (names == null || names.length == 0)
+                return target.getAbsolutePath();
+
+            target.mkdirs();
+            for (String name : names) {
+                File out = new File(target, name);
+                // Раскладываем только недостающее: при каждом запуске
+                // переписывать десятки файлов незачем.
+                if (out.exists() && out.length() > 0)
+                    continue;
+                try (InputStream in = assets.open("csv/" + name);
+                     OutputStream os = new FileOutputStream(out)) {
+                    byte[] buffer = new byte[16384];
+                    int read;
+                    while ((read = in.read(buffer)) > 0)
+                        os.write(buffer, 0, read);
+                }
+            }
+        } catch (IOException e) {
+            // Не падаем: без карты приложение всё равно должно запуститься и
+            // сказать, что случилось, а не исчезнуть с экрана.
+            Log.e("wworld", "карта не разложилась: " + e.getMessage());
+        }
+        return target.getAbsolutePath();
     }
 
     @Override

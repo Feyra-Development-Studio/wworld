@@ -34,6 +34,16 @@ android {
         }
     }
 
+    sourceSets {
+        // Библиотека игры и выгрузка карты кладутся сюда сборочными
+        // скриптами до вызова Gradle: одна собирается Free Pascal, вторая —
+        // генератором. Gradle их только упаковывает.
+        main {
+            jniLibs.srcDirs += ['../../build/android']
+            assets.srcDirs += ['../../build/android-assets']
+        }
+    }
+
     buildTypes {
         release { minifyEnabled false }
     }
