@@ -421,10 +421,15 @@ jobs:
           path: |
             /opt/fpc-src
             /opt/android-ndk-r26d
-          key: fpc-android-x86_64-${{ hashFiles('packaging/android/build-library.sh') }}
+          key: fpc-android-${{ hashFiles('packaging/android/build-library.sh') }}
 
       - name: Игра под x86_64 (для эмулятора)
         run: sudo -E packaging/android/build-library.sh x86_64
+
+      - name: Игра под arm64-v8a (то, на чём играют)
+        # Первый прогон долгий: под другую архитектуру нужен целый
+        # кросс-компилятор Free Pascal. Дальше берётся из кэша.
+        run: sudo -E packaging/android/build-library.sh arm64-v8a
 
       - name: Сборка APK
         run: |
