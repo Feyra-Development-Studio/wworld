@@ -84,12 +84,14 @@ echo "== исходники FPC =="
     https://github.com/fpc/FPCSource.git "$FPCSRC"
 
 RTL="$FPCSRC/rtl/units/$CPU-android"
-if [ ! -d "$RTL" ]; then
+# Одного ядра мало: игра берёт Contnrs и SysUtils из пакетов fcl. Признаком
+# готовности считаем именно пакеты — ядро без них собирается, а игра нет.
+if [ ! -d "$FPCSRC/packages/fcl-base/units/$CPU-android" ]; then
     echo "== библиотека времени выполнения под $CPU-android =="
     cd "$FPCSRC"
     if [ "$CPU" = "$(uname -m)" ]; then
         # Та же архитектура: хватает RTL, компилятор берём родной.
-        PATH="$NDKBIN:$PATH" make -s rtl_clean rtl \
+        PATH="$NDKBIN:$PATH" make -s rtl packages \
             CPU_TARGET="$CPU" OS_TARGET=android \
             CROSSBINDIR="$NDKBIN" BINUTILSPREFIX="$TRIPLE-" \
             FPC="$(command -v ppcx64)"

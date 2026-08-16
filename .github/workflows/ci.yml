@@ -413,8 +413,18 @@ jobs:
           ls build/android-assets/csv | head -3
           echo "файлов карты: $(ls build/android-assets/csv | wc -l)"
 
+      - name: Сохранённая сборка Free Pascal под Android
+        # Ядро и пакеты под android собираются минутами, а меняются раз в
+        # никогда. Ключ завязан на скрипт сборки: правка скрипта — новый ключ.
+        uses: actions/cache@v4
+        with:
+          path: |
+            /opt/fpc-src
+            /opt/android-ndk-r26d
+          key: fpc-android-x86_64-${{ hashFiles('packaging/android/build-library.sh') }}
+
       - name: Игра под x86_64 (для эмулятора)
-        run: packaging/android/build-library.sh x86_64
+        run: sudo -E packaging/android/build-library.sh x86_64
 
       - name: Сборка APK
         run: |
