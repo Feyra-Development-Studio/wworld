@@ -403,6 +403,9 @@ jobs:
         # генерация переедет на устройство (Renjin), и этот шаг уйдёт.
         run: |
           set -euo pipefail
+          # Каталог для единиц компилятор сам не создаёт, а сообщает об этом
+          # невнятно: «Can't create object file».
+          mkdir -p build/units
           fpc -Mobjfpc -Sh -O2 -Fusrc/dungeon -FUbuild/units -osrc/demo/demo src/demo/demo.pas
           ./src/demo/demo --seed 20260813 --levels 10 --out build/dungeon --test
           mkdir -p build/android-assets/csv
