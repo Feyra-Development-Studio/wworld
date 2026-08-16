@@ -10,27 +10,22 @@ if(NOT EXISTS ${BLT_ROOT}/CMakeLists.txt)
         "Подмодуль BearLibTerminal не подтянут. Выполните: tools/deps.sh android")
 endif()
 
-add_subdirectory(${BLT_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/bearlibterminal)
+# Обе готовые библиотеки собирает packaging/android/build-library.sh: игре
+# нужна библиотека терминала при компоновке, а Gradle дошёл бы до неё только
+# сейчас — замкнутый круг. Здесь они лишь подключаются.
+set(PREBUILT ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../build/android/${ANDROID_ABI})
+
+foreach(LIB BearLibTerminal wwandroid)
+    if(NOT EXISTS ${PREBUILT}/lib${LIB}.so)
+        message(FATAL_ERROR
+            "нет lib${LIB}.so для ${ANDROID_ABI}. "
+            "Соберите: packaging/android/build-library.sh ${ANDROID_ABI}")
+    endif()
+    add_library(${LIB} SHARED IMPORTED)
+    set_target_properties(${LIB} PROPERTIES IMPORTED_LOCATION ${PREBUILT}/lib${LIB}.so)
+endforeach()
 
 add_library(wworld SHARED glue.cpp)
 
-# Игра собирается не здесь: её собирает Free Pascal кросс-компилятором
-# (packaging/android/build-library.sh), а CMake только подключает готовое.
-# Свести это в одну сборку нельзя — CMake не умеет Pascal, а FPC не умеет
-# проект Gradle.
-set(WWANDROID ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../build/android/${ANDROID_ABI}/libwwandroid.so)
-
-if(EXISTS ${WWANDROID})
-    add_library(wwandroid SHARED IMPORTED)
-    set_target_properties(wwandroid PROPERTIES IMPORTED_LOCATION ${WWANDROID})
-    target_link_libraries(wworld wwandroid)
-    message(STATUS "игра подключена: ${WWANDROID}")
-else()
-    # Собираться без игры приложение обязано: связка проверяется отдельно, и
-    # молчаливое включение пустышки было бы хуже внятного отказа при запуске.
-    message(WARNING "библиотеки игры нет (${WWANDROID}); "
-                    "соберите packaging/android/build-library.sh ${ANDROID_ABI}")
-endif()
-
 target_include_directories(wworld PRIVATE ${BLT_ROOT}/Terminal/Include/C)
-target_link_libraries(wworld BearLibTerminal android log)
+target_link_libraries(wworld BearLibTerminal wwandroid android log)

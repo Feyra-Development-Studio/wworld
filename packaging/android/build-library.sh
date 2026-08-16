@@ -115,6 +115,23 @@ fi
 SYSROOT="$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
 PKG=$(find "$FPCSRC/packages" -type d -name "$CPU-android" | sed 's/^/-Fu/' | tr '\n' ' ')
 
+# BearLibTerminal собирается здесь же, и это не прихоть: игра ссылается на неё
+# при компоновке, а Gradle собирал бы её только на следующем шаге — замкнутый
+# круг. Заодно исчезает вторая сборка той же библиотеки: приложение подключает
+# готовую.
+echo "== BearLibTerminal под $ABI =="
+cmake -S third_party/bearlibterminal -B "build/android/cmake-$ABI" \
+    -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+    -DANDROID_ABI="$ABI" \
+    -DANDROID_PLATFORM="android-$API" \
+    -DCMAKE_BUILD_TYPE=Release > "build/android/cmake-$ABI.log" 2>&1
+cmake --build "build/android/cmake-$ABI" --target BearLibTerminal -j"$(nproc)" >> "build/android/cmake-$ABI.log" 2>&1
+BLT_SO="$(find third_party/bearlibterminal/Output -name 'libBearLibTerminal.so' | head -1)"
+[ -n "$BLT_SO" ] || { echo "BearLibTerminal не собрался, см. build/android/cmake-$ABI.log"; exit 1; }
+mkdir -p "$OUT"
+cp "$BLT_SO" "$OUT/"
+echo "  $(file "$OUT/libBearLibTerminal.so" | cut -c1-90)"
+
 echo "== библиотека игры =="
 mkdir -p "$OUT" "build/android/units-$ABI"
 PATH="$NDKBIN:$PATH" "$COMPILER" -Tandroid -P"$CPU" -Mobjfpc -Sh -O2 -dUSE_BLT \
@@ -124,6 +141,7 @@ PATH="$NDKBIN:$PATH" "$COMPILER" -Tandroid -P"$CPU" -Mobjfpc -Sh -O2 -dUSE_BLT \
     -FU"build/android/units-$ABI" \
     -Fl"$SYSROOT/usr/lib/$LIBDIR/$API" \
     -Fl"$SYSROOT/usr/lib/$LIBDIR" \
+    -Fl"$OUT" \
     -FD"$NDKBIN" \
     -o"$OUT/libwwandroid.so" \
     src/android/wwandroid.pas
