@@ -162,6 +162,7 @@ namespace
 			terminal_log(TK_LOG_INFO, "игра просит выхода");
 			g_running = false;
 		}
+	}
 
 	void TerminalThread()
 	{
