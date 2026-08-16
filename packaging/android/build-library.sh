@@ -120,6 +120,7 @@ PKG=$(find "$FPCSRC/packages" -type d -name "$CPU-android" | sed 's/^/-Fu/' | tr
 # круг. Заодно исчезает вторая сборка той же библиотеки: приложение подключает
 # готовую.
 echo "== BearLibTerminal под $ABI =="
+mkdir -p "$OUT" "build/android"
 cmake -S third_party/bearlibterminal -B "build/android/cmake-$ABI" \
     -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
     -DANDROID_ABI="$ABI" \
@@ -127,8 +128,7 @@ cmake -S third_party/bearlibterminal -B "build/android/cmake-$ABI" \
     -DCMAKE_BUILD_TYPE=Release > "build/android/cmake-$ABI.log" 2>&1
 cmake --build "build/android/cmake-$ABI" --target BearLibTerminal -j"$(nproc)" >> "build/android/cmake-$ABI.log" 2>&1
 BLT_SO="$(find third_party/bearlibterminal/Output -name 'libBearLibTerminal.so' | head -1)"
-[ -n "$BLT_SO" ] || { echo "BearLibTerminal не собрался, см. build/android/cmake-$ABI.log"; exit 1; }
-mkdir -p "$OUT"
+[ -n "$BLT_SO" ] || { echo "BearLibTerminal не собрался:"; tail -20 "build/android/cmake-$ABI.log"; exit 1; }
 cp "$BLT_SO" "$OUT/"
 echo "  $(file "$OUT/libBearLibTerminal.so" | cut -c1-90)"
 
