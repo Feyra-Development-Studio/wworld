@@ -62,6 +62,12 @@ type
   public
     procedure Render; override;
     procedure Run; override;
+    { Один кадр: разобрать накопившийся ввод и перерисовать.
+
+      Нужен там, где своего цикла у игры быть не может: на Android кадром
+      управляет система, а Run с его terminal_read внутри занял бы поток
+      навсегда. Возвращает False, когда игра просит выхода. }
+    function Step: Boolean;
   end;
   {$ENDIF}
 
@@ -392,6 +398,36 @@ begin
   terminal_print(0, FViewH + 2,
     AnsiString('щелчок — идти в клетку, WASD/QEZC — по шагам, > и < — лестницы, Esc — выход'));
   terminal_refresh;
+end;
+
+function TWwBltViewer.Step: Boolean;
+var
+  key: Integer;
+begin
+  Result := True;
+
+  { Разбираем только то, что уже пришло. terminal_read ждёт события, и в
+    покадровом режиме это означало бы остановку до первого касания. }
+  while terminal_has_input do
+  begin
+    key := terminal_read;
+    case key of
+      TK_W, TK_UP: HandleKey('w');
+      TK_S, TK_DOWN: HandleKey('s');
+      TK_A, TK_LEFT: HandleKey('a');
+      TK_D, TK_RIGHT: HandleKey('d');
+      TK_Q: HandleKey('q');
+      TK_E: HandleKey('e');
+      TK_Z: HandleKey('z');
+      TK_C: HandleKey('c');
+      TK_PERIOD: UseStairs;
+      TK_COMMA: UseStairs;
+      TK_MOUSE_LEFT: HandlePointer;
+      TK_ESCAPE, TK_CLOSE: Result := False;
+    end;
+  end;
+
+  Render;
 end;
 
 procedure TWwBltViewer.Run;
