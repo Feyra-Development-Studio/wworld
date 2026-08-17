@@ -81,7 +81,24 @@ public class RenjinEngine implements GeometryEngine {
      * значит движок остаётся один на обе платформы — а не два похожих, за
      * расхождением которых пришлось бы следить. */
     public RenjinEngine(Reader geometryScript) throws Exception {
-        session = new SessionBuilder().withDefaultPackages().build();
+        this(geometryScript, null);
+    }
+
+    /* Загрузчик классов задаётся снаружи ради Android.
+     *
+     * Renjin ищет пакеты ресурсами через загрузчик сеанса
+     * (ClasspathPackage.getResource), а часть его ресурсов до приложения не
+     * доходит: упаковщик APK выбрасывает файлы, чьё имя начинается с точки.
+     * Приложение подставляет загрузчик, который недостающее находит.
+     *
+     * На настольной сборке довод пуст, и берётся обычный загрузчик — то есть
+     * ничего не меняется. */
+    public RenjinEngine(Reader geometryScript, ClassLoader classLoader) throws Exception {
+        SessionBuilder builder = new SessionBuilder().withDefaultPackages();
+        if (classLoader != null) {
+            builder.setClassLoader(classLoader);
+        }
+        session = builder.build();
         context = session.getTopLevelContext();
 
         eval("ww.embedded <- TRUE");

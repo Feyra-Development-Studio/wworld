@@ -420,8 +420,12 @@ jobs:
           # Внутри архива имена упаковщика не касаются, а форк умеет
           # спрашивать недостающее (BaseFrame.setFallbackResourceProvider).
           rm -rf build/renjin-res && mkdir -p build/renjin-res
-          (cd build/renjin-res && unzip -qo "$OLDPWD/$JAR" 'org/renjin/base/*')
+          # Кладём все ресурсы движка, а не только базовый пакет: пакеты
+          # methods и stats тоже лежат ресурсами, и часть их имён упаковщик
+          # выбрасывает по тому же правилу.
+          (cd build/renjin-res && unzip -qo "$OLDPWD/$JAR" -x '*.class' 'org/*' 'META-INF/org.renjin.package/*')
           HIDDEN="$(find build/renjin-res -name '.*' -type f | wc -l)"
+          echo "всего ресурсов: $(find build/renjin-res -type f | wc -l)"
           echo "скрытых ресурсов: $HIDDEN"
           [ "$HIDDEN" -gt 0 ] || { echo "скрытых ресурсов не нашлось — проверьте, тот ли jar"; exit 1; }
           (cd build/renjin-res && zip -qr "$OLDPWD/build/android-assets/renjin-resources.zip" .)

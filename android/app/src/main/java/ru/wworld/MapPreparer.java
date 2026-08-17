@@ -8,10 +8,11 @@ import org.json.JSONObject;
 import org.renjin.base.BaseFrame;
 import org.renjin.repackaged.guava.base.Function;
 
-import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
@@ -73,12 +74,12 @@ final class MapPreparer {
         // него не доходит: упаковщик выбрасывает файлы, имя которых
         // начинается с точки. Отдаём их из архива в ресурсах — форк умеет
         // спрашивать (BaseFrame.setFallbackResourceProvider).
-        installResourceFallback(assets);
+        ClassLoader loader = prepareRenjinResources(assets, filesDir);
 
         GeometryEngine engine;
         try (Reader script = new InputStreamReader(
                 assets.open("geometry.R"), StandardCharsets.UTF_8)) {
-            engine = new RenjinEngine(script);
+            engine = new RenjinEngine(script, loader);
         }
         Log.i(TAG, "движок R поднят за " + (System.currentTimeMillis() - started) + " мс");
 
@@ -113,41 +114,85 @@ final class MapPreparer {
     }
 
     /**
-     * Ставит запасной источник ресурсов базового пакета.
+     * Раскладывает ресурсы Renjin, не пережившие упаковку APK, и отдаёт
+     * загрузчик классов, который их находит.
      *
-     * Архив нужен именно архивом, а не набором файлов: имена вроде
-     * {@code .onLoad.RData} упаковщик выбрасывает и из ресурсов, и из assets,
-     * а внутри zip они его не касаются.
+     * Упаковщик Android выбрасывает файлы, имя которых начинается с точки, а
+     * базовый пакет Renjin таких содержит около двух сотен. Внутри архива
+     * имена упаковщика не касаются, поэтому они едут архивом и
+     * раскладываются здесь — один раз при первом запуске.
+     *
+     * Найти их надо двумя разными путями, потому что Renjin спрашивает
+     * по-разному: базовый пакет — через getResourceAsStream своего же класса
+     * (для этого в форке есть BaseFrame.setFallbackResourceProvider), а
+     * прочие пакеты — через загрузчик классов сеанса.
      */
-    private static void installResourceFallback(final AssetManager assets) {
+    private static ClassLoader prepareRenjinResources(AssetManager assets, File filesDir)
+            throws Exception {
+        final File root = new File(filesDir, "renjin-res");
+
+        if (!new File(root, "org/renjin/base").isDirectory()) {
+            root.mkdirs();
+            int count = 0;
+            try (ZipInputStream zip = new ZipInputStream(assets.open(RESOURCES_ARCHIVE))) {
+                ZipEntry entry;
+                byte[] buffer = new byte[16384];
+                while ((entry = zip.getNextEntry()) != null) {
+                    File out = new File(root, entry.getName());
+                    if (entry.isDirectory()) {
+                        out.mkdirs();
+                        continue;
+                    }
+                    out.getParentFile().mkdirs();
+                    try (OutputStream os = new FileOutputStream(out)) {
+                        int read;
+                        while ((read = zip.read(buffer)) > 0) os.write(buffer, 0, read);
+                    }
+                    count++;
+                }
+            }
+            Log.i(TAG, "разложено ресурсов Renjin: " + count);
+        }
+
         BaseFrame.setFallbackResourceProvider(new Function<String, InputStream>() {
             @Override public InputStream apply(String resourcePath) {
-                // Renjin просит путь вида /org/renjin/base/.onLoad.RData
-                String name = resourcePath.startsWith("/")
-                        ? resourcePath.substring(1) : resourcePath;
+                File file = new File(root, resourcePath.startsWith("/")
+                        ? resourcePath.substring(1) : resourcePath);
                 try {
-                    // Архив открывается заново на каждый запрос: они редки
-                    // (только при построении сеанса), а держать его открытым
-                    // значит держать и дескриптор ресурса.
-                    ZipInputStream zip = new ZipInputStream(assets.open(RESOURCES_ARCHIVE));
-                    ZipEntry entry;
-                    while ((entry = zip.getNextEntry()) != null) {
-                        if (entry.getName().equals(name)) {
-                            ByteArrayOutputStream out = new ByteArrayOutputStream();
-                            byte[] buffer = new byte[16384];
-                            int read;
-                            while ((read = zip.read(buffer)) > 0) out.write(buffer, 0, read);
-                            zip.close();
-                            return new ByteArrayInputStream(out.toByteArray());
-                        }
-                    }
-                    zip.close();
-                } catch (Exception e) {
-                    Log.e(TAG, "ресурс " + name + " не достался из архива: " + e);
+                    return file.isFile() ? new FileInputStream(file) : null;
+                } catch (IOException e) {
+                    Log.e(TAG, "ресурс " + resourcePath + " не открылся: " + e);
+                    return null;
                 }
-                return null;
             }
         });
+
+        // Загрузчик, который сперва спрашивает обычным путём, а потом ищет
+        // среди разложенного. Подменять весь путь поиска незачем: почти все
+        // ресурсы упаковку пережили и лежат в APK.
+        return new ClassLoader(MapPreparer.class.getClassLoader()) {
+            @Override public java.net.URL getResource(String name) {
+                java.net.URL url = super.getResource(name);
+                if (url != null) return url;
+                File file = new File(root, name);
+                try {
+                    return file.isFile() ? file.toURI().toURL() : null;
+                } catch (Exception e) {
+                    return null;
+                }
+            }
+
+            @Override public InputStream getResourceAsStream(String name) {
+                InputStream in = super.getResourceAsStream(name);
+                if (in != null) return in;
+                File file = new File(root, name);
+                try {
+                    return file.isFile() ? new FileInputStream(file) : null;
+                } catch (IOException e) {
+                    return null;
+                }
+            }
+        };
     }
 
     private static String readAsset(AssetManager assets, String name) throws Exception {
