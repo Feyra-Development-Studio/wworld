@@ -55,6 +55,7 @@ public class TerminalActivity extends Activity implements SurfaceHolder.Callback
      * приложение — живым: занимать поток деятельности бесконечным циклом
      * нельзя, система убьёт его за неотзывчивость. */
     private Handler stepHandler;
+    private boolean started;
     private final Runnable stepRunnable = new Runnable() {
         @Override public void run() {
             nativeStep();
@@ -94,13 +95,7 @@ public class TerminalActivity extends Activity implements SurfaceHolder.Callback
 
         // Порог, дальше которого движение пальца перестаёт быть щелчком.
         // Библиотека о плотности точек экрана не знает, а здесь она известна.
-        int touchSlop = ViewConfiguration.get(this).getScaledTouchSlop();
-        nativeStart(getAssets(), touchSlop, unpackData());
-
-        if (!nativeIsThreaded()) {
-            stepHandler = new Handler(Looper.getMainLooper());
-            stepHandler.post(stepRunnable);
-        }
+        prepareMap();
     }
 
     @Override
@@ -112,45 +107,50 @@ public class TerminalActivity extends Activity implements SurfaceHolder.Callback
     }
 
     /**
-     * Раскладывает карту из ресурсов APK в хранилище приложения.
+     * Готовит карту к запуску.
      *
-     * Ресурсы в APK — не файлы: у них нет пути, и обычным файловым чтением их
-     * не открыть. Библиотека умеет читать их через AAssetManager, но игра на
-     * Pascal читает файлы, и переучивать её ради одной платформы значило бы
-     * тащить Android внутрь общего кода.
+     * Карта не лежит в приложении готовой: в ресурсах граф подземелья, а
+     * растр собирается здесь же, на устройстве, движком R (MapPreparer).
+     * Выгрузка кладётся в хранилище приложения, потому что ресурсы APK — не
+     * файлы, а игра на Pascal читает файлы.
      *
-     * Поэтому раскладываем один раз при запуске. Возвращается путь, по
-     * которому игра найдёт выгрузку.
+     * Собирается в отдельном потоке: десять этажей на телефоне — это
+     * секунды, а поток деятельности за это время система успеет счесть
+     * зависшим.
      */
-    private String unpackData() {
-        File target = new File(getFilesDir(), "csv");
-        AssetManager assets = getAssets();
-        try {
-            String[] names = assets.list("csv");
-            if (names == null || names.length == 0)
-                return target.getAbsolutePath();
-
-            target.mkdirs();
-            for (String name : names) {
-                File out = new File(target, name);
-                // Раскладываем только недостающее: при каждом запуске
-                // переписывать десятки файлов незачем.
-                if (out.exists() && out.length() > 0)
-                    continue;
-                try (InputStream in = assets.open("csv/" + name);
-                     OutputStream os = new FileOutputStream(out)) {
-                    byte[] buffer = new byte[16384];
-                    int read;
-                    while ((read = in.read(buffer)) > 0)
-                        os.write(buffer, 0, read);
+    private void prepareMap() {
+        new Thread(new Runnable() {
+            @Override public void run() {
+                String dir;
+                try {
+                    dir = MapPreparer.prepare(getAssets(), getFilesDir());
+                } catch (Throwable e) {
+                    // Не падаем: приложение обязано запуститься и сказать, что
+                    // случилось, а не исчезнуть с экрана.
+                    Log.e("wworld", "карта не собралась: " + e, e);
+                    dir = new File(getFilesDir(), "csv").getAbsolutePath();
                 }
+
+                final String ready = dir;
+                runOnUiThread(new Runnable() {
+                    @Override public void run() { startGame(ready); }
+                });
             }
-        } catch (IOException e) {
-            // Не падаем: без карты приложение всё равно должно запуститься и
-            // сказать, что случилось, а не исчезнуть с экрана.
-            Log.e("wworld", "карта не разложилась: " + e.getMessage());
+        }, "map-preparer").start();
+    }
+
+    private void startGame(String dataDir) {
+        if (started)
+            return;
+        started = true;
+
+        int touchSlop = ViewConfiguration.get(this).getScaledTouchSlop();
+        nativeStart(getAssets(), touchSlop, dataDir);
+
+        if (!nativeIsThreaded()) {
+            stepHandler = new Handler(Looper.getMainLooper());
+            stepHandler.post(stepRunnable);
         }
-        return target.getAbsolutePath();
     }
 
     @Override

@@ -22,3 +22,6 @@ dist/
 # мусор компоновщика
 link*.res
 ppas.sh
+app/libs/
+build/android/
+build/android-assets/

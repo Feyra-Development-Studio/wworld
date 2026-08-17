@@ -397,7 +397,19 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq fpc r-base-core r-cran-codetools binutils-aarch64-linux-gnu
 
-      - name: Карта для приложения
+      - name: Движок R для приложения
+        # Renjin собирается из подмодуля тем же скриптом, что и для сверки
+        # движков: одно место на все поставки, чтобы правки в форке доезжали
+        # до телефона без ручного переноса.
+        run: |
+          set -euo pipefail
+          export WWORLD_JDK8="$JAVA_HOME_8_X64"
+          JAR="$(tools/renjin-jar.sh build/renjin)"
+          mkdir -p android/app/libs
+          cp "$JAR" android/app/libs/renjin.jar
+          ls -sh android/app/libs/renjin.jar
+
+      - name: Граф подземелья и geometry.R для приложения
         # Карту делает наш же генератор, а не заготовка в репозитории:
         # выгрузка — результат прогона, ей в истории не место. Позже
         # генерация переедет на устройство (Renjin), и этот шаг уйдёт.
@@ -408,10 +420,12 @@ jobs:
           mkdir -p build/units
           fpc -Mobjfpc -Sh -O2 -Fusrc/dungeon -FUbuild/units -osrc/demo/demo src/demo/demo.pas
           ./src/demo/demo --seed 20260813 --levels 10 --out build/dungeon --test
-          mkdir -p build/android-assets/csv
-          cp build/dungeon/csv/* build/android-assets/csv/
-          ls build/android-assets/csv | head -3
-          echo "файлов карты: $(ls build/android-assets/csv | wc -l)"
+          mkdir -p build/android-assets
+          # В приложение кладётся граф, а не выгрузка: растр собирается на
+          # устройстве движком R. Выгрузка нужна только для сверки.
+          cp build/dungeon/dungeon.json build/android-assets/
+          cp scripts/geometry.R build/android-assets/
+          ls -sh build/android-assets/
 
       - name: Сохранённая сборка Free Pascal под Android
         # Ядро и пакеты под android собираются минутами, а меняются раз в
@@ -446,7 +460,10 @@ jobs:
           ls -sh "$APK"
           unzip -l "$APK" | grep -E "\.so$" || { echo "в APK нет ни одной библиотеки"; exit 1; }
           unzip -l "$APK" | grep -q "libwwandroid.so" || { echo "в APK нет игры"; exit 1; }
-          unzip -l "$APK" | grep -q "assets/csv/index.csv" || { echo "в APK нет карты"; exit 1; }
+          unzip -l "$APK" | grep -q "assets/dungeon.json" || { echo "в APK нет графа подземелья"; exit 1; }
+          unzip -l "$APK" | grep -q "assets/geometry.R" || { echo "в APK нет geometry.R"; exit 1; }
+          # Дексованный Renjin — то, ради чего всё и затевалось.
+          unzip -l "$APK" | grep -cE "classes[0-9]*\.dex" 
 
       # KVM бегунку доступен, но по умолчанию закрыт правами.
       - name: Открыть KVM
@@ -480,7 +497,11 @@ jobs:
             # приложении. Всё, что проверяется, пишется в одну строку.
             grep -q "FATAL EXCEPTION\|beginning of crash" logcat.txt && { echo "приложение упало"; exit 1; } || true
             grep -q "терминал открыт на устройстве" logcat.txt || { echo "терминал не открылся"; exit 1; }
-            grep -q "подземелье открыто" logcat.txt || { echo "подземелье не открылось"; grep -i "подземелье" logcat.txt; exit 1; }
+            grep -q "подземелье открыто" logcat.txt || { echo "подземелье не открылось"; grep -i "подземелье\|карта" logcat.txt; exit 1; }
+            # Карта обязана быть собрана здесь же, движком R, а не принесена готовой.
+            grep -q "движок R поднят" logcat.txt || { echo "движок R не поднялся"; exit 1; }
+            grep -oE "собрано этажей: [0-9]+ за [0-9]+ мс" logcat.txt | tail -1
+            grep -q "собрано этажей: 10" logcat.txt || { echo "этажи не собрались"; exit 1; }
             grep -qE "eglCreateContext.*maj 3" logcat.txt || { echo "контекст GLES3 не создан"; exit 1; }
             grep -oE "экран [0-9]+x[0-9]+, ячейка [0-9]+x[0-9]+, сетка [0-9]+x[0-9]+" logcat.txt | tail -1
             grep -qE "экран [1-9][0-9]*x[1-9][0-9]*" logcat.txt || { echo "размер экрана не определился"; exit 1; }

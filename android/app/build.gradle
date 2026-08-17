@@ -41,6 +41,22 @@ android {
         main {
             jniLibs.srcDirs += ['../../build/android']
             assets.srcDirs += ['../../build/android-assets']
+            // Сборщик карты и движок геометрии общие с настольной сборкой:
+            // копировать их сюда значило бы завести вторую правду.
+            java.srcDirs += ['../../java/src']
+        }
+    }
+
+    // Renjin — интерпретатор R на JVM, около семнадцати мегабайт классов.
+    // Дексованием и слиянием занимается сам Android Gradle Plugin; multidex
+    // при minSdk 28 поддержан системой, отдельной библиотеки не нужно.
+    packagingOptions {
+        resources {
+            // В Renjin и его зависимостях повторяются служебные файлы —
+            // без этого упаковка спорит сама с собой.
+            excludes += ['META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA',
+                         'META-INF/LICENSE*', 'META-INF/NOTICE*', 'META-INF/DEPENDENCIES']
+            pickFirsts += ['**/*.properties', '**/*.xml']
         }
     }
 
@@ -52,4 +68,16 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+}
+
+dependencies {
+    // Движок R и разбор JSON кладутся в app/libs сборочным шагом: renjin
+    // собирается из подмодуля (tools/renjin-jar.sh), json берётся с maven.
+    // На Android org.json есть в самой системе, но общие с настольной
+    // сборкой классы компилируются против отдельной библиотеки.
+    implementation fileTree(dir: 'libs', include: ['renjin*.jar'])
+
+    // org.json в APK не кладётся: он есть в самой системе, и вторая копия
+    // тех же классов — верный способ получить спор при дексовании. Для
+    // компиляции хватает того, что даёт android.jar.
 }
