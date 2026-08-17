@@ -1,9 +1,17 @@
 package ru.wworld;
 
 import java.io.FileReader;
+import java.io.StringReader;
 import java.io.Reader;
-import javax.script.ScriptEngine;
-import javax.script.ScriptEngineManager;
+import org.renjin.eval.Context;
+import org.renjin.eval.Session;
+import org.renjin.eval.SessionBuilder;
+import org.renjin.parser.RParser;
+import org.renjin.sexp.ExpressionVector;
+import org.renjin.sexp.SEXP;
+import org.renjin.sexp.StringArrayVector;
+import org.renjin.sexp.StringVector;
+import org.renjin.sexp.Symbol;
 
 /** Renjin как движок геометрии внутри приложения.
  *
@@ -62,18 +70,28 @@ public class RenjinEngine implements GeometryEngine {
         }
     }
 
-    private final ScriptEngine engine;
+    private final Session session;
+    private final Context context;
 
+    /* Renjin поднимается напрямую, без javax.script.
+     *
+     * JSR-223 на Android не существует: пакета javax.script в системе нет
+     * вовсе, и сборка приложения на нём останавливается. Прямой путь через
+     * Session и Context доступен одинаково на настольной JVM и на ART, а
+     * значит движок остаётся один на обе платформы — а не два похожих, за
+     * расхождением которых пришлось бы следить. */
     public RenjinEngine(Reader geometryScript) throws Exception {
-        ScriptEngine e = new ScriptEngineManager().getEngineByName("Renjin");
-        if (e == null) {
-            throw new IllegalStateException(
-                "движок Renjin не найден в classpath — проверьте jar");
-        }
-        this.engine = e;
-        engine.eval("ww.embedded <- TRUE");
-        engine.eval(geometryScript);
-        engine.eval("srv <- WwGeometryServer$new()");
+        session = new SessionBuilder().withDefaultPackages().build();
+        context = session.getTopLevelContext();
+
+        eval("ww.embedded <- TRUE");
+        context.evaluate(RParser.parseAllSource(geometryScript));
+        eval("srv <- WwGeometryServer$new()");
+    }
+
+    private SEXP eval(String source) throws Exception {
+        ExpressionVector expressions = RParser.parseAllSource(new StringReader(source));
+        return context.evaluate(expressions);
     }
 
     public RenjinEngine(String geometryPath) throws Exception {
@@ -83,12 +101,13 @@ public class RenjinEngine implements GeometryEngine {
     @Override
     public String ask(String command) {
         try {
-            // Команда передаётся привязкой, а не склейкой строки запроса:
+            // Команда кладётся в окружение, а не склеивается в строку запроса:
             // в ней бывают кавычки и очень длинные поля карты.
-            engine.put("ww.line", command);
-            Object r = engine.eval("srv$dispatch(ww.line)");
-            if (r instanceof org.renjin.sexp.StringVector) {
-                return ((org.renjin.sexp.StringVector) r).getElementAsString(0);
+            session.getGlobalEnvironment().setVariable(
+                context, Symbol.get("ww.line"), new StringArrayVector(command));
+            SEXP r = eval("srv$dispatch(ww.line)");
+            if (r instanceof StringVector) {
+                return ((StringVector) r).getElementAsString(0);
             }
             return String.valueOf(r);
         } catch (Throwable t) {
