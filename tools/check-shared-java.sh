@@ -21,6 +21,19 @@ WORK="${WORK:-build/shared-java}"
 ANDROID_JAR="${1:-${ANDROID_JAR:-}}"
 mkdir -p "$WORK"
 
+# javac бывает не в PATH, зато рядом с java: так устроены и бегунок CI, и
+# песочница. Ищем осознанно, а не падаем с «command not found».
+if ! command -v javac > /dev/null; then
+    if [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/javac" ]; then
+        PATH="$JAVA_HOME/bin:$PATH"
+    elif [ -n "${WWORLD_JDK:-}" ] && [ -x "$WWORLD_JDK/bin/javac" ]; then
+        PATH="$WWORLD_JDK/bin:$PATH"
+    else
+        echo "нет javac: укажите JAVA_HOME или WWORLD_JDK"
+        exit 2
+    fi
+fi
+
 RENJIN="$(tools/renjin-jar.sh "$WORK/renjin" 2>/dev/null || true)"
 [ -n "$RENJIN" ] || { echo "нет движка Renjin: tools/renjin-jar.sh"; exit 2; }
 
