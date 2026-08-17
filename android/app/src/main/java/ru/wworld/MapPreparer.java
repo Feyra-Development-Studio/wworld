@@ -5,6 +5,10 @@ import android.util.Log;
 
 import org.json.JSONObject;
 
+import org.renjin.base.BaseFrame;
+import org.renjin.repackaged.guava.base.Function;
+
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -16,6 +20,8 @@ import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Locale;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 /**
  * Сборка карты на устройстве.
@@ -36,6 +42,9 @@ import java.util.Locale;
 final class MapPreparer {
 
     private static final String TAG = "wworld";
+
+    /** Ресурсы Renjin, которые не переживают упаковку APK поодиночке. */
+    private static final String RESOURCES_ARCHIVE = "renjin-resources.zip";
 
     /**
      * Готовит выгрузку карты в каталоге приложения и возвращает путь к ней.
@@ -60,6 +69,12 @@ final class MapPreparer {
 
         // geometry.R читается из ресурсов: это тот же файл, что на настольных
         // платформах, и расходиться они не должны.
+        // Renjin ищет базовый пакет ресурсами внутри APK, и часть из них до
+        // него не доходит: упаковщик выбрасывает файлы, имя которых
+        // начинается с точки. Отдаём их из архива в ресурсах — форк умеет
+        // спрашивать (BaseFrame.setFallbackResourceProvider).
+        installResourceFallback(assets);
+
         GeometryEngine engine;
         try (Reader script = new InputStreamReader(
                 assets.open("geometry.R"), StandardCharsets.UTF_8)) {
@@ -95,6 +110,44 @@ final class MapPreparer {
 
         Log.i(TAG, "карта собрана за " + (System.currentTimeMillis() - started) + " мс: " + csvDir);
         return csvDir.getAbsolutePath();
+    }
+
+    /**
+     * Ставит запасной источник ресурсов базового пакета.
+     *
+     * Архив нужен именно архивом, а не набором файлов: имена вроде
+     * {@code .onLoad.RData} упаковщик выбрасывает и из ресурсов, и из assets,
+     * а внутри zip они его не касаются.
+     */
+    private static void installResourceFallback(final AssetManager assets) {
+        BaseFrame.setFallbackResourceProvider(new Function<String, InputStream>() {
+            @Override public InputStream apply(String resourcePath) {
+                // Renjin просит путь вида /org/renjin/base/.onLoad.RData
+                String name = resourcePath.startsWith("/")
+                        ? resourcePath.substring(1) : resourcePath;
+                try {
+                    // Архив открывается заново на каждый запрос: они редки
+                    // (только при построении сеанса), а держать его открытым
+                    // значит держать и дескриптор ресурса.
+                    ZipInputStream zip = new ZipInputStream(assets.open(RESOURCES_ARCHIVE));
+                    ZipEntry entry;
+                    while ((entry = zip.getNextEntry()) != null) {
+                        if (entry.getName().equals(name)) {
+                            ByteArrayOutputStream out = new ByteArrayOutputStream();
+                            byte[] buffer = new byte[16384];
+                            int read;
+                            while ((read = zip.read(buffer)) > 0) out.write(buffer, 0, read);
+                            zip.close();
+                            return new ByteArrayInputStream(out.toByteArray());
+                        }
+                    }
+                    zip.close();
+                } catch (Exception e) {
+                    Log.e(TAG, "ресурс " + name + " не достался из архива: " + e);
+                }
+                return null;
+            }
+        });
     }
 
     private static String readAsset(AssetManager assets, String name) throws Exception {

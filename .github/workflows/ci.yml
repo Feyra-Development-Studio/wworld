@@ -405,9 +405,27 @@ jobs:
           set -euo pipefail
           export WWORLD_JDK8="$JAVA_HOME_8_X64"
           JAR="$(tools/renjin-jar.sh build/renjin)"
-          mkdir -p android/app/libs
+          mkdir -p android/app/libs build/android-assets
           cp "$JAR" android/app/libs/renjin.jar
           ls -sh android/app/libs/renjin.jar
+
+          # Ресурсы, которые не переживают упаковку APK поодиночке.
+          #
+          # Renjin держит базовый пакет ресурсами внутри jar, и часть из них
+          # названа с точки в начале (.onLoad.RData и прочие). Упаковщик
+          # Android такие файлы молча выбрасывает: на прошлом прогоне в APK
+          # оказалось 1492 ресурса .RData и ни одного скрытого, отчего Renjin
+          # падал на построении сеанса.
+          #
+          # Внутри архива имена упаковщика не касаются, а форк умеет
+          # спрашивать недостающее (BaseFrame.setFallbackResourceProvider).
+          rm -rf build/renjin-res && mkdir -p build/renjin-res
+          (cd build/renjin-res && unzip -qo "$OLDPWD/$JAR" 'org/renjin/base/*')
+          HIDDEN="$(find build/renjin-res -name '.*' -type f | wc -l)"
+          echo "скрытых ресурсов: $HIDDEN"
+          [ "$HIDDEN" -gt 0 ] || { echo "скрытых ресурсов не нашлось — проверьте, тот ли jar"; exit 1; }
+          (cd build/renjin-res && zip -qr "$OLDPWD/build/android-assets/renjin-resources.zip" .)
+          ls -sh build/android-assets/renjin-resources.zip
 
       - name: Граф подземелья и geometry.R для приложения
         # Карту делает наш же генератор, а не заготовка в репозитории:
@@ -462,6 +480,7 @@ jobs:
           unzip -l "$APK" | grep -q "libwwandroid.so" || { echo "в APK нет игры"; exit 1; }
           unzip -l "$APK" | grep -q "assets/dungeon.json" || { echo "в APK нет графа подземелья"; exit 1; }
           unzip -l "$APK" | grep -q "assets/geometry.R" || { echo "в APK нет geometry.R"; exit 1; }
+          unzip -l "$APK" | grep -q "assets/renjin-resources.zip" || { echo "в APK нет архива ресурсов Renjin"; exit 1; }
           # Дексованный Renjin — то, ради чего всё и затевалось.
           unzip -l "$APK" | grep -cE "classes[0-9]*\.dex" 
 
