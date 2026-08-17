@@ -5,7 +5,16 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
+
+/* Про JSONException.
+ *
+ * В android.jar это проверяемое исключение, а в библиотеке org.json с maven —
+ * наследник RuntimeException. Из-за расхождения тот же код собирался на
+ * настольной платформе и не собирался под Android. Объявление throws
+ * устраивает обе стороны: объявлять непроверяемое исключение разрешено.
+ */
 
 /** Сборка растровой карты этажа из графа-инструкции.
  *
@@ -52,7 +61,7 @@ public class MapBuilder {
     }
 
     /** Запрос формы по её спецификации — той же строкой, что шлёт Pascal. */
-    private String shapeRequest(JSONObject room) {
+    private String shapeRequest(JSONObject room) throws JSONException {
         String shape = room.getString("shape");
         if (!"composite".equals(shape)) {
             int w = room.getInt("w"), h = room.getInt("h");
@@ -91,7 +100,7 @@ public class MapBuilder {
         return COR_MAIN;
     }
 
-    private void stampRoom(Level lv, JSONObject room) {
+    private void stampRoom(Level lv, JSONObject room) throws JSONException {
         String reply = engine.ask(shapeRequest(room));
         String[] f = reply.split(" ");
         if (!"OK".equals(f[0])) {
@@ -107,7 +116,7 @@ public class MapBuilder {
         }
     }
 
-    private void stampFork(Level lv, JSONObject fork) {
+    private void stampFork(Level lv, JSONObject fork) throws JSONException {
         int rank = fork.getInt("rank"), id = fork.getInt("id");
         int x0 = fork.getInt("x"), y0 = fork.getInt("y");
         for (int y = 0; y < rank; y++) {
@@ -115,7 +124,7 @@ public class MapBuilder {
         }
     }
 
-    private void stampCorridor(Level lv, JSONObject cor, List<Integer> corridorIds) {
+    private void stampCorridor(Level lv, JSONObject cor, List<Integer> corridorIds) throws JSONException {
         JSONArray path = cor.getJSONArray("path");
         int rank = cor.getInt("rank"), id = cor.getInt("id");
         int from = cor.getInt("from"), to = cor.getInt("to");
@@ -160,7 +169,7 @@ public class MapBuilder {
     }
 
     /** Собирает этаж по его описанию из dungeon.json. */
-    public Level build(JSONObject levelJson) {
+    public Level build(JSONObject levelJson) throws JSONException {
         Level lv = new Level();
         lv.number = levelJson.getInt("level");
         lv.width = levelJson.getInt("width");
@@ -189,7 +198,16 @@ public class MapBuilder {
         for (int i = 0; i < rooms.length(); i++) all.add(tag(rooms.getJSONObject(i), "room"));
         for (int i = 0; i < forks.length(); i++) all.add(tag(forks.getJSONObject(i), "fork"));
         for (int i = 0; i < corridors.length(); i++) all.add(tag(corridors.getJSONObject(i), "corridor"));
-        Collections.sort(all, Comparator.comparingInt(o -> o.getInt("id")));
+        // Лямбда объявить throws не может, поэтому исключение перехватывается
+        // здесь и превращается в непроверяемое: испорченный граф — это отказ
+        // сборки, а не случай, который стоит разбирать при сравнении.
+        Collections.sort(all, (a, b) -> {
+            try {
+                return Integer.compare(a.getInt("id"), b.getInt("id"));
+            } catch (JSONException e) {
+                throw new IllegalStateException("в графе нет id у построения", e);
+            }
+        });
 
         for (JSONObject o : all) {
             switch (o.getString("ww.kind")) {
@@ -205,13 +223,13 @@ public class MapBuilder {
         return lv;
     }
 
-    private JSONObject tag(JSONObject o, String kind) {
+    private JSONObject tag(JSONObject o, String kind) throws JSONException {
         o.put("ww.kind", kind);
         return o;
     }
 
     /** Все этажи подземелья из разобранного dungeon.json. */
-    public List<Level> buildAll(JSONObject dungeon) {
+    public List<Level> buildAll(JSONObject dungeon) throws JSONException {
         List<Level> out = new ArrayList<>();
         JSONArray levels = dungeon.getJSONArray("levels");
         for (int i = 0; i < levels.length(); i++) out.add(build(levels.getJSONObject(i)));
