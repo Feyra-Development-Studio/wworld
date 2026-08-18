@@ -94,7 +94,18 @@ public class RenjinEngine implements GeometryEngine {
      * На настольной сборке довод пуст, и берётся обычный загрузчик — то есть
      * ничего не меняется. */
     public RenjinEngine(Reader geometryScript, ClassLoader classLoader) throws Exception {
-        SessionBuilder builder = new SessionBuilder().withDefaultPackages();
+        /* Пакеты по умолчанию не грузятся, и это не мелочь.
+         *
+         * withDefaultPackages тянет stats, graphics, grDevices и прочее, а
+         * загрузка stats на Android падает: Renjin связывает точки входа
+         * скомпилированных библиотек GNU R через MethodHandle, а в ART
+         * java.lang.invoke реализован не полностью — MethodType.parameterSlotCount
+         * валится на пустой ссылке. Замерено на эмуляторе.
+         *
+         * Нам эти пакеты и не нужны: geometry.R берёт methods, и тот грузится
+         * по своей команде library(methods) внутри самого скрипта. Заодно
+         * сеанс поднимается за сотни миллисекунд вместо секунд. */
+        SessionBuilder builder = new SessionBuilder();
         if (classLoader != null) {
             builder.setClassLoader(classLoader);
         }
