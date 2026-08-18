@@ -53,4 +53,12 @@ fi
 
 echo "== сборка против android.jar =="
 javac -encoding UTF-8 -cp "$RENJIN:$ANDROID_JAR" -d "$WORK/android" java/src/ru/wworld/*.java
-echo "  собирается"
+echo "  общий код собирается"
+
+# Исходники приложения проверяются здесь же, и это не роскошь: до сих пор они
+# компилировались только сборкой APK, то есть каждая опечатка стоила круга по
+# CI в восемь минут. Ровно так и вылезло забытое import java.io.OutputStream.
+echo "== исходники приложения =="
+javac -encoding UTF-8 -cp "$RENJIN:$ANDROID_JAR:$WORK/android" -d "$WORK/app" \
+    android/app/src/main/java/ru/wworld/*.java
+echo "  собираются"
